@@ -1,15 +1,16 @@
-# RELEASE — `<PRODUCT_NAME>`
+# RELEASE — `US4 V6 Apple Edition`
 
-Processo para cortar uma release de `<PRODUCT_NAME>` (`<DOMAIN>`, stack `<STACK>`). Releases são tagueadas, automatizadas via GitHub Actions e reversíveis. Dono do processo: `<TEAM>`.
+Processo para cortar release de **US4 V6 Apple Edition** (`us4-v6-simplicio-apple`). Releases são tagueadas, automatizadas via GitHub Actions, assinadas (Apple Developer ID) e reversíveis. Dono do processo: `us4-core`. Stack: C++17/20 + CMake + MLX + Metal + NEON + ANE + GoogleTest + Playwright + Ralph Loop.
 
 ---
 
 ## 1. Princípios
 
 - **SemVer estrito.** `MAJOR.MINOR.PATCH`. Quebra contrato = MAJOR, feature compatível = MINOR, fix compatível = PATCH.
-- **Tag é fonte de verdade.** Nada de "release sem tag". Sem tag, sem deploy de produção.
+- **Tag é fonte de verdade.** Sem tag, sem deploy de produção.
 - **CHANGELOG é contrato com o usuário.** Toda release tem entrada lida e revisada.
-- **Rollback em minutos.** Toda release tem caminho documentado de volta.
+- **Rollback em minutos.** Toda release tem caminho documentado de volta (Homebrew tap reverte fórmula, GitHub Release marca anterior como `latest`).
+- **Correctness é gate de release.** Logit diff regressivo bloqueia release até resolver ou aprovar via ADR.
 
 ---
 
@@ -19,29 +20,21 @@ Critério rápido:
 
 | Mudança | Bump |
 |---------|------|
-| Bug fix interno, sem mudar API/UX | PATCH (`1.4.2` -> `1.4.3`) |
-| Feature nova, retrocompatível | MINOR (`1.4.2` -> `1.5.0`) |
-| Quebra de API, schema, contrato | MAJOR (`1.4.2` -> `2.0.0`) |
+| Bug fix interno, sem mudar API/CLI/correctness | PATCH (`1.4.2` -> `1.4.3`) |
+| Backend novo atrás de flag (GA), adapter novo, CLI flag retrocompatível | MINOR (`1.4.2` -> `1.5.0`) |
+| Quebra de API C++ exportada, mudança em `.us4` format, CLI breaking | MAJOR (`1.4.2` -> `2.0.0`) |
 | Pre-release, RC | sufixo (`1.5.0-rc.1`) |
 
-Local do número de versão depende do `<STACK>`:
-- Node: `package.json` campo `version`.
-- Python: `pyproject.toml` ou `__version__.py`.
-- Go: tag git é a versão (sem campo em arquivo).
-- Rust: `Cargo.toml` campo `version`.
-- .NET: `<Version>` no `.csproj` ou `Directory.Build.props`.
-- PHP/Laravel: `composer.json` campo `version`.
+Local do número de versão:
+- `CMakeLists.txt`: `project(us4 VERSION 1.5.0 LANGUAGES CXX OBJCXX)`.
+- `runtime/version.h`: `constexpr auto kUs4Version = "1.5.0";` (gerado por CMake).
+- Homebrew formula em tap separado (`wesleysimplicio/homebrew-us4`): `version "1.5.0"` + novo SHA256.
 
-Bump idempotente:
+Bump:
 
 ```bash
-# Node
-npm version minor --no-git-tag-version
-
-# Python (uv/poetry)
-uv version --bump minor
-
-# manual: edita arquivo, commita
+git add CMakeLists.txt CHANGELOG.md
+git commit -m "chore(release): bump to 1.5.0"
 ```
 
 ---
@@ -54,26 +47,30 @@ Formato Keep a Changelog. Toda release tem bloco com seções abaixo (omita as v
 ## [1.5.0] - 2026-05-07
 
 ### Added
-- Magic link login flow (auth) - task #12.
+- Metal GEMM kernel with FP16 support (sprint-03 / T03.4).
+- ANE opt-in path via `--ane` for M5+ devices.
 
 ### Changed
-- Checkout error messages now use i18n keys.
+- KV cache eviction policy now uses LRU per-expert (ADR-007).
+- Default thread pool size = `hw.physicalcpu` (was `hw.ncpu`).
 
 ### Fixed
-- Double-charge on 3DS retry (#48).
+- Logit diff regression in causal mask for prompt > 2048 tokens (#142).
+- MLX tensor leak on `RuntimeContext` shutdown (#138).
 
 ### Removed
-- Legacy session cookie (deprecated em v1.3).
+- Legacy `--gpu` flag (deprecated em v1.3, use `--backend metal`).
 
 ### Security
-- Bump <lib> from 4.1.2 to 4.1.5 (CVE-2026-0001).
+- Bump `safetensors-cpp` from 0.2.1 to 0.2.4 (CVE-2026-0142, OOB read no GGUF loader).
 ```
 
 Regras:
 - PT-BR no chat, **CHANGELOG sempre em inglês** (face pública do repo).
 - Sem entrada genérica tipo "various improvements". Específico ou nada.
 - `Security` ganha destaque, com CVE/advisory linkado.
-- Entrada referencia task ou PR (#numero).
+- Entrada referencia task (sprint-XX/TXX.Y) ou PR (#numero).
+- Logit-diff regressions resolvidas vão em `Fixed` com link pro ADR/issue.
 
 ---
 
@@ -85,7 +82,9 @@ Após bump e CHANGELOG mergeados em `main`:
 git checkout main
 git pull --rebase origin main
 
-# valida que CHANGELOG e package version batem
+grep 'VERSION ' CMakeLists.txt
+head -20 CHANGELOG.md
+
 git tag -a v1.5.0 -m "Release 1.5.0"
 git push origin v1.5.0
 ```
@@ -98,7 +97,7 @@ Tag deve apontar pro commit em que CHANGELOG e version foram atualizados. Não t
 
 ## 5. Deploy automático via GitHub Actions
 
-Push da tag dispara `.github/workflows/deploy-prod.yml`:
+Push da tag dispara `.github/workflows/release.yml`:
 
 ```yaml
 on:
@@ -107,65 +106,119 @@ on:
       - 'v*.*.*'
 
 jobs:
-  deploy:
-    runs-on: ubuntu-latest
+  release:
+    runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
-      - name: Build artifact
-        run: <comando build do STACK>
-      - name: Push image / upload bundle
-        run: <comando push>
-      - name: Rollout production
-        run: <comando rollout>
-      - name: Smoke test
-        run: npm run test:smoke -- --baseUrl=https://<PRODUCT_NAME>.io
+      - name: Setup toolchain
+        run: brew install ninja cmake
+      - name: Build Release (arm64)
+        run: |
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_OSX_ARCHITECTURES=arm64 \
+            -DUS4_ENABLE_MLX=ON \
+            -DUS4_ENABLE_METAL=ON \
+            -DUS4_ENABLE_ANE=ON
+          cmake --build build -j $(sysctl -n hw.ncpu)
+      - name: Run DoD gate (unit + regression + correctness + e2e)
+        run: |
+          ctest --test-dir build --output-on-failure
+          npx playwright install --with-deps
+          npx playwright test
+      - name: Sign binary
+        env:
+          APPLE_DEVELOPER_ID: ${{ secrets.APPLE_DEVELOPER_ID }}
+        run: |
+          codesign --force --options=runtime --sign "$APPLE_DEVELOPER_ID" \
+            --timestamp build/us4-cli
+      - name: Package tarball
+        run: |
+          tar -czf us4-v6-apple-${{ github.ref_name }}.tar.gz \
+            -C build us4-cli runtime/libus4-runtime.dylib
+          shasum -a 256 us4-v6-apple-${{ github.ref_name }}.tar.gz > checksum.txt
+      - name: Notarize
+        env:
+          APPLE_NOTARY_USER: ${{ secrets.APPLE_NOTARY_USER }}
+          APPLE_NOTARY_PASSWORD: ${{ secrets.APPLE_NOTARY_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          xcrun notarytool submit us4-v6-apple-${{ github.ref_name }}.tar.gz \
+            --apple-id "$APPLE_NOTARY_USER" \
+            --password "$APPLE_NOTARY_PASSWORD" \
+            --team-id "$APPLE_TEAM_ID" \
+            --wait
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            us4-v6-apple-${{ github.ref_name }}.tar.gz
+            checksum.txt
+          body_path: CHANGELOG.md
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-rc.') }}
+      - name: Bump Homebrew tap
+        env:
+          TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          ./.github/scripts/update-homebrew-tap.sh \
+            ${{ github.ref_name }} \
+            $(cat checksum.txt | cut -d' ' -f1)
+      - name: Smoke test pos-publish
+        run: |
+          brew tap wesleysimplicio/us4
+          brew install us4
+          us4-cli --version | grep ${{ github.ref_name }}
+          us4-cli --probe
       - name: Notify
-        run: <slack/discord/email pra TEAM>
+        run: ./.github/scripts/notify-release.sh ${{ github.ref_name }}
 ```
 
 Acompanhar o run:
 
 ```bash
 gh run watch
-gh run list --workflow=deploy-prod.yml --limit 5
+gh run list --workflow=release.yml --limit 5
 ```
 
-Falhou? Workflow é idempotente, pode re-rodar. Se rollout passou mas smoke falhou, etapa de rollback dispara automático (próxima seção).
+Falhou? Workflow é idempotente, pode re-rodar. Se assinatura/notarização falhou, é segredo errado — checa `gh secret list` antes de re-rodar.
 
 ---
 
 ## 6. Smoke tests pós-deploy
 
-Pequeno conjunto de cenários críticos rodando contra produção logo após o rollout. Objetivo: detectar regressão grande em < 5min.
+Cenários críticos rodando contra a release publicada. Detectar regressão grande em < 5min.
 
 Cobertura mínima:
-- Health check `/healthz` retorna 200.
-- Login com usuário de smoke completa fluxo.
-- 1 fluxo crítico de `<DOMAIN>` (ex: criar pedido, enviar mensagem, abrir conta).
-- Métrica de erro (Sentry, Datadog) não spikou nos últimos 2min.
+- `us4-cli --version` retorna a versão nova.
+- `us4-cli --probe` detecta hardware (M-series, MLX, Metal, ANE quando M5+).
+- `us4-cli run --model qwen-0.5b --prompt "hi"` gera >= 5 tokens em <= 60s.
+- Correctness diff em modelo de smoke (`qwen-0.5b`, 16 tokens) dentro de 1e-3.
+- Homebrew install limpo em macOS 14 + macOS 15 funciona.
 
-Smoke roda dentro do workflow `deploy-prod.yml`. Falha = rollback automático.
+Smoke roda dentro do workflow `release.yml`. Falha = não publica como `latest`, mantém release anterior.
 
 ---
 
 ## 7. Rollback
 
-Quando: smoke falhou, métrica spikou, usuários reportando incidente, sentry com taxa de erro > baseline.
+Quando: smoke falhou, usuário reportou crash/correctness regressivo, métrica spikou.
 
-### Estratégia: revert tag e redeploy da anterior
-
-Mais rápido e seguro que tentar fix em produção.
+### Estratégia A — Reverter Homebrew tap (mais rápido)
 
 ```bash
-# identifica tag anterior
-gh release list --limit 5
+cd ~/dev/homebrew-us4
+git revert HEAD
+git push origin main
+```
 
-# dispara redeploy da tag anterior
-git checkout v1.4.2
-gh workflow run deploy-prod.yml --ref v1.4.2
+Usuários que ainda não atualizaram caem no checksum velho.
 
-# acompanha
-gh run watch
+### Estratégia B — Marcar release anterior como `latest`
+
+```bash
+gh release edit v1.5.0 --prerelease
+gh release edit v1.4.2 --latest
 ```
 
 ### Marca a release ruim
@@ -184,21 +237,24 @@ CHANGELOG ganha nota:
 ### Pós-rollback
 
 - Postmortem em `.specs/incidents/INC-YYYY-MM-DD.md` em até 48h.
-- Fix vai em PR normal (com teste regressivo) e tagueia próxima patch (`v1.5.1`).
+- Fix vai em PR normal (com teste regressivo + correctness diff) e tagueia próxima patch (`v1.5.1`).
+- Adiciona regression test ou correctness fixture que teria pego o bug.
+- Se causa veio de gap arquitetural, abre ADR.
 - Atualiza skill/playbook se causa-raiz era processo, não código.
 
 ---
 
 ## 8. Pre-releases e RCs
 
-Para mudanças grandes (MAJOR), considere RC antes da release final:
+Para mudanças grandes (MAJOR) ou backend novo atingindo GA, considere RC:
 
 ```bash
 git tag v2.0.0-rc.1
 git push origin v2.0.0-rc.1
 ```
 
-- Workflow separado `deploy-rc.yml` envia pra ambiente `rc.<PRODUCT_NAME>.io`.
+- Workflow `release.yml` detecta sufixo `-rc.` e publica como `prerelease: true`.
+- Não bumpa Homebrew tap `latest`. Tap separado `wesleysimplicio/us4-rc` opcional.
 - Beta testers usam por 3-7 dias antes do tag final `v2.0.0`.
 - Bugs em RC viram patch no RC (`v2.0.0-rc.2`), não em PATCH SemVer ainda.
 
@@ -206,14 +262,16 @@ git push origin v2.0.0-rc.1
 
 ## 9. Checklist do release manager
 
-- [ ] `main` verde (build, lint, unit, e2e).
-- [ ] Versão bumpada conforme SemVer.
-- [ ] `CHANGELOG.md` atualizado, revisado, em inglês.
+- [ ] `main` verde (build, format, lint, unit, regression, correctness, e2e).
+- [ ] Versão bumpada em `CMakeLists.txt` conforme SemVer.
+- [ ] `CHANGELOG.md` atualizado, revisado, em inglês, com tasks/PRs linkados.
 - [ ] Tag criada apontando pro commit certo.
-- [ ] Workflow de deploy completou verde.
-- [ ] Smoke tests passaram.
-- [ ] Métricas estáveis nos primeiros 30min.
-- [ ] Notificação pra `<TEAM>` enviada.
+- [ ] Workflow `release.yml` completou verde.
+- [ ] Binário assinado (codesign) + notarizado (Apple).
+- [ ] Smoke tests passaram (probe + run + correctness).
+- [ ] Homebrew tap atualizado com novo checksum.
+- [ ] Métricas estáveis nos primeiros 30min (issues abertos, brew install reports).
+- [ ] Notificação pra `us4-core` enviada.
 - [ ] Release notes publicadas (`gh release create v1.5.0 -F CHANGELOG.md`).
 
 Em incidente, congelar releases até postmortem fechar com ação concreta no roadmap.

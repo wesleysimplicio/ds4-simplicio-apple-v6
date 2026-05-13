@@ -6,74 +6,83 @@
 
 # AGENTS.md
 
-> Master instruction file lido por **Claude Code**, **Codex CLI**, **GitHub Copilot**, **Hermes Agent** (Nous Research), **OpenClaw**, **Cursor**, **Aider** e qualquer outro agent que respeite o padrão `AGENTS.md`. É o contrato entre humano e IA neste repositório.
+> Master instruction file lido por **Claude Code**, **Codex CLI**, **GitHub Copilot**, **Hermes Agent** (Nous Research), **OpenClaw**, **Cursor**, **Aider** e qualquer outro agent que respeite o padrão `AGENTS.md`. Contrato entre humano e IA neste repositório.
 >
 > Mudou algo aqui? Reflete em `CLAUDE.md` e `.github/copilot-instructions.md` (mantém os três alinhados ou usa symlink).
 
-Este arquivo dá ao agent **tudo que ele precisa saber pra entregar uma task** sem perguntar: stack, comandos, fluxo de trabalho, padrões, proibições, skills disponíveis e atalhos. Lê ele inteiro antes de escrever a primeira linha de código.
+Este arquivo dá ao agent **tudo que ele precisa saber pra entregar uma task** sem perguntar: stack, comandos, fluxo, padrões, proibições, skills e atalhos. Lê ele inteiro antes da primeira linha de código.
 
 ---
 
-## Localização de Projetos (CHECK OBRIGATÓRIO no início de toda task)
+## Projeto
 
-Antes de qualquer análise, o agent **DEVE** rodar:
+- **Nome**: US4 V6 Apple Edition (`us4-v6-simplicio-apple`)
+- **Domínio**: Universal State Runtime — inferência local de LLMs em Apple Silicon (M1..M5+).
+- **Time**: us4-core.
+- **Edição irmã**: [`us4-v6-simplicio-windows`](https://github.com/wesleysimplicio/us4-v6-simplicio-windows) (mesmo runtime contract, stack Windows).
 
-```bash
-ls projects/
-```
-
-- **`projects/` vazia (só `.gitkeep`)** -> o projeto a analisar é a **raiz do repo**. Single-project mode.
-- **`projects/` tem subpastas** -> cada subpasta é um projeto independente. Monorepo mode. Raiz vira workspace (config/docs/shared apenas).
-
-Regra fixa, sem ambiguidade. Detalhes: [`projects/README.md`](./projects/README.md).
+Mono-projeto. Raiz do repo = projeto. Ignora `projects/` se vazia.
 
 ---
 
 ## Stack
 
-`<STACK>` (placeholder — substitui pela stack real do projeto, ex: `Node.js 20 + TypeScript + Next.js 14 + Playwright + Vitest`).
+C++17/20 + CMake + MLX + Metal + NEON (Accelerate) + ANE (M5+) + GoogleTest + Playwright (CLI E2E) + Ralph Loop.
 
-Detalhes completos:
+Detalhes:
 
-- Linguagem principal: `<STACK>`
-- Framework web/API: `<STACK>`
-- Banco de dados: `<STACK>`
-- Test runner unit: `<STACK>` (sugestão: Vitest, Jest, pytest, xUnit)
-- Test runner E2E: **Playwright** (config em `playwright.config.ts`)
-- Linter/formatter: `<STACK>` (sugestão: ESLint + Prettier, Ruff, dotnet format)
-- CI/CD: GitHub Actions (ver `.github/workflows/`)
-- Deploy: `<STACK>` (Vercel/Netlify/Docker/Azure/AWS — ver `.specs/workflow/RELEASE.md`)
+- **Linguagem principal**: C++17/20 (modules + concepts ok onde Clang 16+ aceita).
+- **Build system**: CMake >= 3.27 + Ninja generator.
+- **Compute backends**:
+  - **MLX** (primary tensor framework, unified-memory aware).
+  - **Metal Performance Shaders** (custom kernels: GEMM, attention, dequant).
+  - **NEON / Accelerate** (CPU SIMD fallback).
+  - **ANE — Apple Neural Engine** (M5+ via CoreML graph compile, opt-in).
+- **Test runner unit**: GoogleTest (gtest + gmock) via CTest.
+- **Test runner E2E**: **Playwright** (CLI flow tests; config em `playwright.config.ts`).
+- **Bench harness**: Google Benchmark em `runtime/benchmarks/`.
+- **Linter / formatter**: clang-tidy (`.clang-tidy`) + clang-format (`.clang-format`).
+- **CI/CD**: GitHub Actions (`.github/workflows/{ci,dod}.yml`). Runner: `macos-14` (M-series).
+- **Distribuição**: tarball assinado + Homebrew tap (`wesleysimplicio/us4`). Detalhes em `.specs/workflow/RELEASE.md`.
 
-> Antes de adicionar dependência nova: **pergunta ao usuário**. Sem exceção.
+> Antes de adicionar dependência nova (CMake `FetchContent`, vcpkg, Homebrew formula, MLX subdir): **pergunta ao usuário**. Sem exceção.
 
 ---
 
 ## Comandos importantes
 
 ```bash
+# bootstrap (1a vez)
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j$(sysctl -n hw.ncpu)
+
 # desenvolvimento
-npm run dev                  # sobe app local
-npm run build                # build de producao
+cmake --build build --target us4-cli
+./build/us4-cli --probe
+./build/us4-cli run --model qwen-0.5b --prompt "hi"
 
 # qualidade
-npm run lint                 # lint + format check
-npm run lint:fix             # lint + format auto-fix
-npm test                     # unit tests
-npm test -- --coverage       # unit + coverage report (gate >= 80%)
+clang-format --dry-run --Werror $(git ls-files '*.cpp' '*.h' '*.mm')
+clang-format -i $(git ls-files '*.cpp' '*.h' '*.mm')
+clang-tidy -p build $(git ls-files 'runtime/**/*.cpp')
+ctest --test-dir build --output-on-failure
+ctest --test-dir build --output-on-failure -L coverage
 
 # E2E
-npx playwright install       # instala browsers (1a vez)
-npx playwright test          # roda suite E2E
-npx playwright test --ui     # modo interativo
-npx playwright show-report   # abre relatorio ultimo run
+npx playwright install
+npx playwright test
+npx playwright test --ui
+npx playwright show-report
+
+# bench
+./build/runtime/benchmarks/dense_baseline
+./build/runtime/benchmarks/moe_throughput
 
 # git/PR
 git checkout -b feat/<task-id>-<slug>
-gh pr create --fill          # usa template de PR
-gh run watch                 # acompanha CI do branch atual
+gh pr create --fill
+gh run watch
 ```
-
-Adapta os comandos pra stack real (`pnpm`, `yarn`, `bun`, `dotnet`, `python`, `go`).
 
 ---
 
@@ -81,34 +90,37 @@ Adapta os comandos pra stack real (`pnpm`, `yarn`, `bun`, `dotnet`, `python`, `g
 
 Toda task técnica passa por esses passos. Não pula etapa.
 
-1. **Ler task** — abre arquivo em `.specs/sprints/sprint-XX/<task-id>.task.md`. Lê contexto + acceptance criteria + test plan + DoD.
-2. **Planejar** — escreve plano interno curto: o que muda, quais arquivos, como verificar, efeitos colaterais. Se task ambígua → pergunta antes de codar.
-3. **Carregar contexto** — lê `.specs/architecture/PATTERNS.md` + ADRs relevantes em `.specs/architecture/ADR-*.md`. Verifica skills aplicáveis em `.skills/`.
-4. **Editar** — aplica edits cirúrgicos. Só toca o que a task pede. Sem refactor extra, sem renomeação, sem comentário a mais.
-5. **Lint** — `npm run lint`. Vermelho = corrige antes de seguir.
-6. **Unit** — `npm test`. Vermelho = corrige antes de seguir. Coverage do diff >= 80%.
-7. **E2E (OBRIGATÓRIO em TODA task)** — `npx playwright test --reporter=list,html`. Captura **trace + screenshot + video** (todos, não "ou"). Sem evidência salva em `playwright-report/` + `test-results/` = task não fechada. Vermelho = corrige.
-8. **Fix loop** — se qualquer etapa falhou: volta ao passo 4. Repete até verde.
-9. **Commit** — Conventional Commits (`feat:`, `fix:`, `chore:`, `docs:`, `refactor:`, `test:`). Mensagem em **inglês**. Body explica *why*, não *what*.
-10. **PR** — `gh pr create`. Preenche template inteiro: link da task, evidências (screenshots Playwright), checklist DoD marcado.
+1. **Ler task** — abre `.specs/sprints/sprint-XX/<task-id>.task.md`. Contexto + AC + test plan + DoD.
+2. **Planejar** — plano interno curto. Task ambígua => pergunta antes de codar.
+3. **Carregar contexto** — `.specs/architecture/PATTERNS.md` + ADRs relevantes. Verifica skills em `.skills/`.
+4. **Editar** — edits cirúrgicos. Só toca o que a task pede.
+5. **Format + Lint** — `clang-format --dry-run --Werror` + `clang-tidy -p build`. Vermelho = corrige.
+6. **Unit** — `ctest --test-dir build --output-on-failure`. Vermelho = corrige. Coverage do diff >= 80%.
+7. **E2E (OBRIGATÓRIO em TODA task que toca CLI/UX)** — `npx playwright test --reporter=list,html`. Captura **trace + screenshot + video**. Sem evidência em `playwright-report/` + `test-results/` = task não fechada.
+8. **Regression + Correctness** — re-roda suíte de sprints anteriores + `runtime/benchmarks/correctness/` (logit diff dentro da tolerância da task).
+9. **Fix loop** — falhou => volta passo 4.
+10. **Commit** — Conventional Commits em **inglês**. Body explica *why*.
+11. **PR** — `gh pr create`. Template inteiro: link da task, evidências Playwright, bench numbers, DoD marcado.
 
 ---
 
 ## Definition of Done
 
-PR só faz merge quando **todos** os itens abaixo estão marcados:
+PR só faz merge quando **todos** os itens estão marcados:
 
-- [ ] Unit tests passam (`npm test` verde)
-- [ ] Lint passa (`npm run lint` verde)
-- [ ] E2E Playwright passa com **evidência anexada em TODA task** — `playwright-report/index.html` + `test-results/<spec>/trace.zip` + screenshots por cenário + video (when retry). Hard rule: sem evidência, sem merge.
-- [ ] Coverage do diff >= 80%
-- [ ] Acceptance Criteria da task: todos os checkboxes marcados
-- [ ] PR template preenchido (link task + descrição + evidências)
+- [ ] Build verde (`cmake --build build` sem warning novo)
+- [ ] Unit tests passam (`ctest --test-dir build` verde)
+- [ ] Lint passa (`clang-tidy` + `clang-format --dry-run` verde)
+- [ ] E2E Playwright passa com **evidência anexada em TODA task que toca CLI/UX** — `playwright-report/index.html` + `test-results/<spec>/trace.zip` + screenshots + video (when retry). Hard rule.
+- [ ] Coverage do diff >= 80% (`llvm-cov` em CI)
+- [ ] Regression suite verde
+- [ ] Correctness diff dentro da tolerância (`runtime/benchmarks/correctness/`)
+- [ ] AC da task: todos os checkboxes marcados
+- [ ] PR template preenchido
 - [ ] Conventional commit no merge
 - [ ] ADR criado em `.specs/architecture/` se mudou decisão arquitetural
 - [ ] Changelog atualizado se release-relevant
-- [ ] Sem warning novo no console
-- [ ] Sem `console.log` / `print` / `Debug.WriteLine` deixado pra trás
+- [ ] Sem `std::cout` / `printf` / `NSLog` de debug deixado pra trás
 - [ ] Sem TODO sem dono e sem prazo
 
 CI bloqueia merge se DoD falhar (`.github/workflows/dod.yml`).
@@ -117,11 +129,16 @@ CI bloqueia merge se DoD falhar (`.github/workflows/dod.yml`).
 
 ## Padrões de código
 
-Padrões completos em `.specs/architecture/PATTERNS.md`. Resumo:
+Padrões completos em `.specs/architecture/PATTERNS.md` (preenchido incrementalmente nos sprints). Resumo:
 
-- Naming, estrutura de pastas, criação de endpoint/componente/teste, tratamento de erro, logging, validação — **tudo lá**.
-- Decisões irreversíveis viram **ADR** em `.specs/architecture/ADR-XXX-*.md` (template em `.specs/architecture/ADR-template.md`).
-- Antes de escrever código novo: lê `PATTERNS.md` da seção relevante. Não inventa estilo próprio.
+- **Naming**: `PascalCase` classes, `camelCase` métodos/funcs, `kSnakeCase` constantes, `snake_case` arquivos.
+- **Headers**: `#pragma once`. `.h` em mesma pasta do `.cpp`.
+- **Smart pointers**: `std::unique_ptr` default, `std::shared_ptr` só com ownership compartilhada real.
+- **No exceptions across ABI boundary** — adapters retornam `std::expected<T,Error>` (polyfill enquanto C++23 não obrigatório).
+- **No global mutable state** fora do `RuntimeContext` singleton.
+- **Tensor ownership**: `Tensor` move-only. `TensorView` pra empréstimo.
+- Decisões irreversíveis viram **ADR** em `.specs/architecture/ADR-XXX-*.md`.
+- Antes de código novo: lê `PATTERNS.md` da seção relevante.
 
 ---
 
@@ -131,11 +148,11 @@ Padrões completos em `.specs/architecture/PATTERNS.md`. Resumo:
 |---|---|
 | Por que esse produto existe? | `.specs/product/VISION.md` |
 | Quem é o usuário? | `.specs/product/PERSONAS.md` |
-| Quais entidades de negócio? | `.specs/product/DOMAIN.md` |
+| Quais entidades de runtime/adapters? | `.specs/product/DOMAIN.md` |
 | Como o sistema é desenhado? | `.specs/architecture/DESIGN.md` |
 | Como escrever código aqui? | `.specs/architecture/PATTERNS.md` |
 | Por que decidimos X? | `.specs/architecture/ADR-*.md` |
-| Como faço PR/branch/release? | `.specs/workflow/WORKFLOW.md`, `RELEASE.md`, `CONTRIBUTING.md` |
+| Como faço PR/branch/release? | `.specs/workflow/{WORKFLOW,RELEASE,CONTRIBUTING}.md` |
 | O que tá no backlog? | `.specs/sprints/BACKLOG.md` |
 | Sprint atual? | `.specs/sprints/sprint-XX/SPRINT.md` |
 | Tasks abertas? | `.specs/sprints/sprint-XX/*.task.md` |
@@ -146,54 +163,53 @@ Padrões completos em `.specs/architecture/PATTERNS.md`. Resumo:
 
 ## Proibido
 
-Lista negra. Nada aqui é negociável.
-
-- **Pular testes** — sem unit/E2E = sem merge.
-- **Mockar pra fazer passar** — mock só pra isolar dependência externa real (HTTP, DB), nunca pra esconder falha.
-- **Commit com vermelho** — lint/test falhando = não commita. Hook `.claude/hooks/pre-commit.sh` bloqueia.
-- **Ignorar ADR** — decisão registrada em ADR é lei. Reverter/mudar ADR exige novo ADR ("Supersedes ADR-XXX").
-- **Adicionar dependência sem perguntar** — toda nova dep (`npm install`, `dotnet add`, etc.) passa por confirmação humana.
-- **Editar arquivo não lido** — lê antes de editar. Sempre.
+- **Pular testes** — sem unit/E2E/regression = sem merge.
+- **Mockar pra fazer passar** — mock só pra isolar dependência externa, nunca pra esconder falha em kernel/runtime.
+- **Commit com vermelho** — Hook `.claude/hooks/pre-commit.sh` bloqueia.
+- **Ignorar ADR** — decisão registrada é lei. Reverter exige novo ADR ("Supersedes ADR-XXX").
+- **Adicionar dependência sem perguntar** — toda nova dep passa por confirmação humana.
+- **Editar arquivo não lido** — lê antes.
 - **Refactor escondido em PR de feature** — refactor = PR separado.
-- **Force push em `main`/`master`** — bloqueado por hook e por settings do repo.
-- **Commitar segredo** — `.env`, token, key, senha → nunca. Usa `.gitignore` + secrets manager.
+- **Force push em `main`** — bloqueado.
+- **Commitar segredo** — `.env`, token HF, key Apple Developer, senha => nunca.
 - **Reformatar arquivo inteiro num PR pequeno** — diff polui review.
+- **Quebrar correctness sem ADR** — regressão de logit-diff > tolerância exige ADR + sign-off do owner.
 
 ---
 
 ## Skills disponíveis
 
-Skills moram em `.skills/<nome>/SKILL.md` e são capacidades reutilizáveis que o agent invoca quando o trigger casa. Lista atual:
+Skills em `.skills/<nome>/SKILL.md`.
 
 ### Ativadas por padrão no início da sessão
 
-Estas três skills são **ativadas automaticamente no começo de toda sessão** (via `.claude/settings.json` SessionStart hook). A política de uso de cada uma é a seguinte:
+Via `.claude/settings.json` SessionStart hook:
 
-- **`caveman`** — modo terse de resposta. Economiza ~65% tokens de output sem perder substância técnica. Default level: `full`. Boundaries: código, commits, PRs e docs canônicos permanecem em prosa normal. **Ativada por padrão**, mas pode ser desativada quando o contexto pedir resposta em prosa normal, via `stop caveman` / `normal mode`.
-- **`ralph-loop`** — loop autônomo `read → plan → execute → lint → unit → e2e → fix → repeat` até DoD verde. **Obrigatório** em TODA task técnica com AC mensurável. Dual exit gate: indicadores verdes + `EXIT_SIGNAL: true`.
-- **`everything-claude-code`** — bundle de ~60 agents + ~221 skills. Padrão: usar o **máximo de agents ECC em paralelo** a cada alteração (single message, múltiplas Agent calls). Reviewers da stack + `security-reviewer` **obrigatórios** após edits.
+- **`caveman`** — modo terse. ~65% menos tokens de output sem perder substância. Default level: `full`. Boundaries: código, commits, PRs e docs canônicos em prosa normal. Desativa com `stop caveman` / `normal mode`.
+- **`ralph-loop`** — loop autônomo `read => plan => execute => format => lint => unit => e2e => regression => fix => repeat` até DoD verde. **Obrigatório** em TODA task técnica com AC mensurável.
+- **`everything-claude-code`** — bundle ~60 agents + ~221 skills. Padrão: **máximo de agents ECC em paralelo** a cada alteração. `cpp-reviewer` + `security-reviewer` **obrigatórios** após edits.
 
 ### Sob demanda
 
-- **`playwright-e2e`** — como escrever teste Playwright neste projeto. Trigger: nova feature de UI ou fluxo end-to-end. Cobre fixtures, page objects, evidências (trace/screenshot/video) e padrões de assert.
-- **`conventional-commits`** — regras de commit (`feat:`, `fix:`, `chore:`, `docs:`, `refactor:`, `test:`, `perf:`, `style:`, `ci:`, `build:`). Trigger: hora de commitar. Inclui exemplos, breaking changes (`!`/`BREAKING CHANGE:`) e scope.
-- **`_template`** — base pra criar skill nova. Copia, renomeia pasta, preenche frontmatter (`name`, `description`, `trigger`, `steps`, `dod`).
+- **`playwright-e2e`** — teste Playwright pro CLI. Fixtures, CLI process wrapper, evidências.
+- **`conventional-commits`** — regras de commit.
+- **`_template`** — base pra criar skill nova.
 
-Detalhes completos: `.skills/README.md`.
+Detalhes: `.skills/README.md`.
 
 ---
 
 ## Custom agents disponíveis
 
-Sub-agents customizados moram em `.agents/<slug>.agent.md` (padrão **AGENTS.md ecosystem**, lido por Claude Code, Codex, Hermes, OpenClaw, Cursor, Aider). Espelhados em `.github/copilot/agents/` para o GitHub Copilot Workspace. Lista atual:
+Sub-agents em `.agents/<slug>.agent.md` (padrão **AGENTS.md ecosystem**). Espelhados em `.github/copilot/agents/` pro Copilot Workspace.
 
-- **`ralph-loop.agent.md`** — Ralph Loop (padrão autônomo, Ralph Wiggum technique). Loop `read → plan → execute → lint → unit → Playwright → fix → repeat` até DoD verde. **Mapeia para comando nativo de cada ferramenta**: Claude Code → `/ralph-loop "<prompt>"` (plugin oficial `claude-plugins-official`); Codex CLI ≥0.128 → `/goal <objective>`; GitHub Copilot CLI → `copilot --autopilot --max-autopilot-continues N`; VS Code Agent Mode → permission level "Autopilot"; Cursor ≥3.0 → Background Agent / `/multitask`. Aciona em **toda task técnica** com AC mensurável. Tools: `edit`, `terminal`, `search`.
-- **`tdd.agent.md`** — TDD Specialist. Escreve teste falhando antes do código. Loop red-green-refactor. Tools: `edit`, `terminal`, `search`. Aciona em feature/bugfix com cobertura nova.
-- **`reviewer.agent.md`** — Code Reviewer. Read-only. Comenta problemas e sugestões. Tools: `search`, `read`. Aciona em revisão de PR aberto, sem editar.
-- **`architect.agent.md`** — Architect. Desenha arquitetura, cria ADRs, atualiza `PATTERNS.md`. Não escreve código de produção. Tools: `edit`, `search`, `read`. Aciona em decisão arquitetural, refactor amplo, integração nova.
-- **`_template.agent.md`** — base para criar agent novo. Copia, renomeia, preenche frontmatter (`name`, `description`, `tools`).
+- **`ralph-loop.agent.md`** — Ralph Loop autônomo. Loop até DoD verde. Mapeia: Claude Code => `/ralph-loop "<prompt>"`; Codex CLI >=0.128 => `/goal <objective>`; Copilot CLI => `copilot --autopilot --max-autopilot-continues N`; VS Code Agent Mode => "Autopilot"; Cursor >=3.0 => Background Agent / `/multitask`. Tools: `edit`, `terminal`, `search`.
+- **`tdd.agent.md`** — TDD Specialist. Teste falhando antes do código (GoogleTest). Loop red-green-refactor.
+- **`reviewer.agent.md`** — Code Reviewer C++. Read-only. Memory safety, modern C++, concurrency, performance.
+- **`architect.agent.md`** — Architect. ADRs, `PATTERNS.md`. Não escreve código de produção.
+- **`_template.agent.md`** — base.
 
-Detalhes completos: `.agents/README.md`.
+Detalhes: `.agents/README.md`.
 
 ---
 
@@ -202,44 +218,39 @@ Detalhes completos: `.agents/README.md`.
 ### Criar nova ADR
 
 ```bash
-# encontra proximo numero
 ls .specs/architecture/ADR-*.md | tail -1
-# copia template
 cp .specs/architecture/ADR-template.md .specs/architecture/ADR-XXX-<slug>.md
-# edita: Status, Contexto, Decisao, Consequencias, Alternativas
-# commita junto com a feature que motivou a decisao
 ```
 
 ### Abrir PR
 
 ```bash
 git push -u origin $(git branch --show-current)
-gh pr create --fill        # usa template padrao (.github/PULL_REQUEST_TEMPLATE.md)
-gh pr view --web           # abre no browser pra revisar
-gh run watch               # acompanha CI
+gh pr create --fill
+gh pr view --web
+gh run watch
 ```
 
 ### Criar task nova
 
 ```bash
 cp .specs/sprints/task-template.md .specs/sprints/sprint-XX/<id>-<slug>.task.md
-# preenche: Contexto, Acceptance Criteria, Out of scope, Test plan, DoD, Pegadinhas, Links
-# adiciona linha em .specs/sprints/BACKLOG.md
 ```
 
 ### Criar skill nova
 
 ```bash
 cp -R .skills/_template .skills/<nome-da-skill>
-# edita SKILL.md: name, description, trigger, steps, padroes, DoD
-# referencia em .skills/README.md
 ```
 
 ### Rodar checklist DoD localmente antes de PR
 
 ```bash
-npm run lint && npm test -- --coverage && npx playwright test
-# se tudo verde -> git commit && git push && gh pr create --fill
+cmake --build build \
+  && clang-format --dry-run --Werror $(git ls-files '*.cpp' '*.h' '*.mm') \
+  && clang-tidy -p build $(git ls-files 'runtime/**/*.cpp') \
+  && ctest --test-dir build --output-on-failure \
+  && npx playwright test
 ```
 
 ---
@@ -248,8 +259,10 @@ npm run lint && npm test -- --coverage && npx playwright test
 
 - **Idioma**: respostas/docs em **pt-BR**, código (vars/funções/classes) em **inglês**, commits em **inglês**.
 - **Sem emoji em código**. README/slides ok.
-- **Sem resumo no final** de uma resposta. Entrega o trabalho e finaliza.
-- **Sem estimativa de tempo** (não tem como prever, não promete).
-- **Pergunta apenas em ambiguidade real** do pedido. Não pergunta pra confirmar trabalho de execução.
+- **Sem resumo no final** de uma resposta.
+- **Sem estimativa de tempo**.
+- **Pergunta apenas em ambiguidade real** do pedido.
 - **Paralelo é o padrão** — research + read + review independentes rodam simultâneos.
-- **Hooks do `.claude/hooks/`** rodam automaticamente: post-edit faz lint/format, pre-commit bloqueia commit vermelho.
+- **Hooks do `.claude/hooks/`** rodam automaticamente: post-edit faz format/lint, pre-commit bloqueia commit vermelho.
+- **MLX é primary path** em Apple Silicon. Metal kernel só onde MLX não cobre. NEON/Accelerate é fallback. ANE é opt-in (`--ane`).
+- **Correctness > performance**. Logit diff vs referência é gate duro.
