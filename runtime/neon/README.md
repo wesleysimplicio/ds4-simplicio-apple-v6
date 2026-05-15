@@ -8,11 +8,13 @@ What already exists:
   reference path, which keeps regression behavior stable
 - `kernel_profile.{h,cpp}` now describes the intended SIMD shape for matmul and
   attention (`fp32-lane4`, `fp16-lane8`, `bf16-lane8`, `int8-dot`)
+- `dequant_int8.{h,cpp}` and `dequant_int4.{h,cpp}` now implement the
+  group-wise dequant contracts used by low-bit NEON planning
 - the NEON profile layer already locks tile expectations such as `8x8`,
   `4x16`, dot-product usage, and fused softmax-rescale intent
 
 What is still missing:
 
 - real ARM intrinsics and Accelerate hot paths behind those profiles
-- dequantization kernels for INT8 and INT4
+- fused or intrinsic-backed dequantization kernels for INT8 and INT4
 - benchmark and correctness wiring for the NEON path

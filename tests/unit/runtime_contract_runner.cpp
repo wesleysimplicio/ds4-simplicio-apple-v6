@@ -1,3 +1,4 @@
+#include <cstdint>
 #include <cstdlib>
 #include <filesystem>
 #include <iostream>
@@ -24,6 +25,8 @@
 #include "mlx/mlx_bridge.h"
 #include "moe/expert_pager.h"
 #include "moe/router.h"
+#include "neon/dequant_int4.h"
+#include "neon/dequant_int8.h"
 #include "neon/kernel_profile.h"
 #include "sprint_01_contract_placeholders.h"
 
@@ -373,6 +376,37 @@ int main() {
     ok &=
         Expect(attentionProfile.headDimBlock == 32U,
                "neon attention should keep 32-wide head blocks when possible");
+
+    us4::Tensor int8Weights({4}, us4::DType::kInt8, us4::DeviceType::kCpu);
+    us4::Tensor int8Output({4}, us4::DType::kFloat32, us4::DeviceType::kCpu);
+    auto *int8Bytes =
+        reinterpret_cast<std::int8_t *>(int8Weights.MutableData());
+    int8Bytes[0] = 4;
+    int8Bytes[1] = -2;
+    int8Bytes[2] = 3;
+    int8Bytes[3] = -1;
+    std::string error;
+    ok &= Expect(us4::DequantizeInt8Groups(int8Weights, 2, {0.5F, 0.25F},
+                                           int8Output, &error),
+                 "neon int8 dequant should succeed for 2 groups");
+    const float *int8Values = int8Output.DataAsFloat32();
+    ok &= Expect(int8Values != nullptr && int8Values[2] == 0.75F,
+                 "neon int8 dequant should scale the second group");
+
+    us4::Tensor int4Weights({8}, us4::DType::kInt4, us4::DeviceType::kCpu);
+    us4::Tensor int4Output({8}, us4::DType::kFloat32, us4::DeviceType::kCpu);
+    auto *int4Bytes =
+        reinterpret_cast<std::uint8_t *>(int4Weights.MutableData());
+    int4Bytes[0] = 0x2F;
+    int4Bytes[1] = 0x91;
+    int4Bytes[2] = 0x47;
+    int4Bytes[3] = 0x8C;
+    ok &= Expect(us4::DequantizeInt4Groups(int4Weights, 8, 4, {0.5F, 0.25F},
+                                           int4Output, &error),
+                 "neon int4 dequant should unpack signed nibbles");
+    const float *int4Values = int4Output.DataAsFloat32();
+    ok &= Expect(int4Values != nullptr && int4Values[7] == -2.0F,
+                 "neon int4 dequant should preserve tail values");
   }
 
   return ok ? EXIT_SUCCESS : EXIT_FAILURE;

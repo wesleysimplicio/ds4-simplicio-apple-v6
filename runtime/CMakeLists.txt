@@ -32,6 +32,8 @@ add_library(us4_runtime_core
   mlx/mlx_bridge.cpp
   moe/expert_pager.cpp
   moe/router.cpp
+  neon/dequant_int4.cpp
+  neon/dequant_int8.cpp
   neon/neon_attention.cpp
   neon/kernel_profile.cpp
   neon/neon_matmul.cpp
