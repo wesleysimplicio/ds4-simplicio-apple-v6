@@ -26,5 +26,5 @@ Adapter Llama 3/4 com GQA, RoPE scaling (linear/dynamic/YaRN), ALiBi opcional. F
 - Correctness: diff vs HF reference <= 1e-3 nos primeiros 64 tokens.
 
 ## DoD
-- Llama 3 + 4 funcionando em FULL/BALANCED/DEGRADED.
+- Llama 3 + 4 funcionando em FULL/BALANCED_PLUS/DEGRADED.
 - Coverage >=80% em `runtime/adapters/llama`.

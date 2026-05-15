@@ -1,6 +1,3 @@
-# CI pipeline — lint, unit tests com coverage, e E2E Playwright em matriz
-# Roda em push (main/develop) e em todo pull_request
-
 name: CI
 
 on:
@@ -13,7 +10,6 @@ on:
       - main
       - develop
 
-# Evita rodar pipelines duplicados quando push acontece num PR aberto
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -23,10 +19,10 @@ env:
   CI: true
 
 jobs:
-  lint:
-    name: Lint
+  starter-lint:
+    name: Starter lint
     runs-on: ubuntu-latest
-    if: github.repository != 'wesleysimplicio/agentic-starter'
+    if: ${{ hashFiles('package.json', 'bin/cli.js', 'test/**/*.js') != '' }}
     timeout-minutes: 10
     steps:
       - name: Checkout
@@ -36,19 +32,25 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
 
       - name: Install dependencies
-        run: npm ci
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -f package-lock.json ]; then
+            npm ci
+          else
+            npm install --no-package-lock
+          fi
 
       - name: Run lint
         run: npm run lint
 
-  unit:
-    name: Unit tests (node ${{ matrix.node-version }})
-    needs: lint
+  starter-unit:
+    name: Starter unit tests (node ${{ matrix.node-version }})
+    needs: starter-lint
     runs-on: ubuntu-latest
-    if: github.repository != 'wesleysimplicio/agentic-starter'
+    if: ${{ hashFiles('package.json', 'bin/cli.js', 'test/**/*.js') != '' }}
     timeout-minutes: 15
     strategy:
       fail-fast: false
@@ -62,10 +64,16 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node-version }}
-          cache: npm
 
       - name: Install dependencies
-        run: npm ci
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -f package-lock.json ]; then
+            npm ci
+          else
+            npm install --no-package-lock
+          fi
 
       - name: Run unit tests with coverage
         run: npm test -- --coverage
@@ -79,11 +87,11 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
-  e2e:
-    name: E2E Playwright (node ${{ matrix.node-version }})
-    needs: unit
+  starter-e2e:
+    name: Starter E2E Playwright (node ${{ matrix.node-version }})
+    needs: starter-unit
     runs-on: ubuntu-latest
-    if: github.repository != 'wesleysimplicio/agentic-starter'
+    if: ${{ hashFiles('package.json', 'playwright.config.ts') != '' && (hashFiles('tests/e2e/**/*.spec.ts') != '' || hashFiles('tests/e2e/**/*.spec.js') != '' || hashFiles('tests/e2e/**/*.test.ts') != '' || hashFiles('tests/e2e/**/*.test.js') != '') }}
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -97,19 +105,42 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node-version }}
-          cache: npm
 
       - name: Install dependencies
-        run: npm ci
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -f package-lock.json ]; then
+            npm ci
+          else
+            npm install --no-package-lock
+          fi
+
+      - name: Detect Playwright dependency
+        id: playwright-dep
+        shell: bash
+        run: |
+          set -euo pipefail
+          if grep -Eq '"(@playwright/test|playwright)"[[:space:]]*:' package.json; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Install Playwright browsers
+        if: ${{ steps.playwright-dep.outputs.available == 'true' }}
         run: npx playwright install --with-deps
 
       - name: Run Playwright tests
+        if: ${{ steps.playwright-dep.outputs.available == 'true' }}
         run: npx playwright test
 
+      - name: Skip notice when Playwright dependency is absent
+        if: ${{ steps.playwright-dep.outputs.available != 'true' }}
+        run: echo "Skipping Playwright execution because the repository does not yet declare a Playwright dependency."
+
       - name: Upload Playwright HTML report
-        if: always()
+        if: ${{ always() && steps.playwright-dep.outputs.available == 'true' }}
         uses: actions/upload-artifact@v4
         with:
           name: playwright-report-node-${{ matrix.node-version }}
@@ -118,10 +149,40 @@ jobs:
           retention-days: 14
 
       - name: Upload Playwright test results (traces, screenshots, videos)
-        if: always()
+        if: ${{ always() && steps.playwright-dep.outputs.available == 'true' }}
         uses: actions/upload-artifact@v4
         with:
           name: test-results-node-${{ matrix.node-version }}
           path: test-results/
           if-no-files-found: warn
           retention-days: 14
+
+  runtime-scaffold:
+    name: Runtime scaffold sanity
+    runs-on: ubuntu-latest
+    if: ${{ hashFiles('CMakeLists.txt', 'runtime/CMakeLists.txt', 'apps/CMakeLists.txt') != '' }}
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Verify runtime scaffold entrypoints
+        shell: bash
+        run: |
+          set -euo pipefail
+          required=(
+            "CMakeLists.txt"
+            "runtime/CMakeLists.txt"
+            "apps/CMakeLists.txt"
+            "apps/cli/main.cpp"
+            "tests/unit/CMakeLists.txt"
+            "tests/e2e/README.md"
+          )
+          missing=0
+          for path in "${required[@]}"; do
+            if [ ! -e "$path" ]; then
+              echo "::error::missing runtime scaffold path: $path"
+              missing=1
+            fi
+          done
+          exit "$missing"

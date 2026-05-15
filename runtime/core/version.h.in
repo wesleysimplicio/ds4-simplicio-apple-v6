@@ -1,0 +1,7 @@
+#pragma once
+
+namespace us4 {
+
+inline constexpr const char* kUs4Version = "@PROJECT_VERSION@";
+
+}  // namespace us4

@@ -1,28 +1,35 @@
-# Personas — US4 V6 Apple Edition
+# Personas - US4 V6 Apple Edition
 
-## P1 — ML Engineer (primary)
-- Roda Llama / DeepSeek / Qwen / Mistral local em MacBook Pro M3/M4/M5.
-- Quer benchmark consistente entre modelos sem trocar de tool.
-- Precisa de KV cache eficiente pra prompts longos (RAG, code review).
-- Dores: llama.cpp nao tem auto-tune; MLX-LM so suporta alguns modelos; Ollama esconde tuning.
-- Ganha com US4: 1 binary, 9 adapters, auto-tune, hot-cold KV, JSON output programatico.
+## P1 - ML Engineer
 
-## P2 — Researcher
-- Compara arquiteturas (dense vs MoE vs ternary) em mesma maquina, mesma quantizacao.
-- Precisa de correctness diff vs reference HF.
-- Quer telemetria detalhada (expert hit-rate, prefetch hit, KV tier breakdown).
-- Dores: cada framework reporta metricas diferente; reproduzir bench leva dia.
-- Ganha com US4: matriz unificada, correctness gates, telemetria padronizada.
+- Runs Qwen, Llama, Gemma, DeepSeek, or Kimi locally on Apple Silicon.
+- Needs repeatable benchmarks across adapters and hardware tiers.
+- Cares about tokens/s, time-to-first-token, KV behavior, and correctness drift.
+- Wins when one runtime replaces a pile of one-off scripts and tools.
 
-## P3 — App Developer
-- Constroi app local-first / privacy-first em macOS (Swift app embutindo runtime).
-- Precisa de SDK estavel (`us4-v6.dylib`), latencia previsivel, footprint memoria limitado.
-- Quer modos MICRO/MICRO_PLUS pra rodar em MacBook Air 16GB.
-- Dores: nenhum runtime entrega bom UX em RAM limitado sem perder qualidade.
-- Ganha com US4: modes ULTRA_LOW/MICRO/MICRO_PLUS, BitNet/Ternary adapters, KV summarization.
+## P2 - Researcher
 
-## P4 — Sysadmin / DevOps (secondary)
-- Gerencia fleet de Macs corporativos rodando inferencia local (compliance, no cloud).
-- Precisa de deploy via MDM, telemetria exportavel (Prometheus/OTLP), update path.
-- Dores: instalar Python + deps + modelos quebra com macOS updates.
-- Ganha com US4: binary universal assinado, telemetria estruturada, sem deps externas.
+- Compares dense, MoE, and ternary architectures on the same Mac.
+- Needs the same prompt, same seed, and clear drift reporting across backends.
+- Wants visibility into expert hit-rate, prefetch hit-rate, KV tier movement, and fallback decisions.
+- Wins when experimentation becomes comparable instead of anecdotal.
+
+## P3 - App Developer
+
+- Embeds local inference into a privacy-first Apple app or internal tool.
+- Needs stable CLI and library contracts, predictable memory behavior, and small-footprint modes.
+- Especially values `MICRO`, `MICRO_PLUS`, and `NANO` for constrained devices.
+- Wins when local inference is shippable without turning the app into a tuning lab.
+
+## P4 - Fleet / Platform Engineer
+
+- Operates local inference on managed Macs in enterprise or lab environments.
+- Needs consistent install, observable health, version discipline, and rollback safety.
+- Cares about hardware probe output, supported memory tiers, structured telemetry, and release confidence.
+- Wins when the runtime behaves like an operational product instead of an experiment.
+
+## Persona notes
+
+- `16 GB` maps to `NANO`, not `MICRO` or `MICRO_PLUS`.
+- Swift/macOS embedding is important, but the first public surface is still CLI + library.
+- Multimodal and ANE-heavy workflows are secondary until dense and MoE core paths are correct.

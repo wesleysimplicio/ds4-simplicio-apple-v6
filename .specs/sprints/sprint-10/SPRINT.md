@@ -26,6 +26,6 @@ Continuous batching multi-sessao. Speculative decoding P-EAGLE / EAGLE-3. Draft 
 - Correctness: tokens identicos a non-speculative path.
 
 ## DoD
-- Batching + speculative em FULL/BALANCED.
+- Batching + speculative em FULL/BALANCED_PLUS.
 - Coverage >=80% em `runtime/scheduler` + `runtime/speculative`.
 - ADR-007 Speculative decoding choice.

@@ -1,35 +1,79 @@
-# Vision — US4 V6 Apple Edition
+# Vision - US4 V6 Apple Edition
 
-## Problema
-LLMs locais (DeepSeek/Kimi/MiniMax/GLM/Llama/Qwen/Gemma/BitNet) tem requisitos heterogeneos (dense, MoE, ternary) e ferramentas existentes (llama.cpp, MLX-LM, Ollama) servem **um modelo por vez**, sem unificacao de pipeline, sem auto-tuning hardware-aware, sem hot-cold KV tiering, sem speculative decoding multi-arquitetura. Em Apple Silicon (M1..M5+), recursos especificos (MLX, Metal, NEON, ANE) ficam subutilizados em runtimes generalistas.
+## Problem
 
-## Quem usa
-- Engenheiros ML rodando inferencia local em MacBook/Mac Studio.
-- Pesquisadores comparando arquiteturas (dense vs MoE vs ternary) sem reescrever pipeline.
-- Devs construindo apps com privacy-first / offline-first em Apple Silicon.
-- Sysadmins entregando inferencia em fleet de Macs corporativos.
+Local LLM inference on Apple Silicon is fragmented.
 
-## Diferencial
-- **1 runtime, 9 adapters** — DeepSeek MoE, Kimi MoE, MiniMax, GLM, Qwen, Llama, Gemma, BitNet, Ternary.
-- **Hardware-aware auto-tuning** — descobre tile/batch optimal por chip+RAM no startup.
-- **Hot-cold KV tiering** — unified memory hot, RAM warm, SSD cold, summarization fallback.
-- **SP-MoE prefetch** — preve experts e carrega em paralelo, reduz latencia per-token >=20%.
-- **Speculative decoding P-EAGLE/EAGLE-3** — >=1.8x speedup em dense + MoE.
-- **ANE offload (M5+)** — dense layers vao pro Neural Engine, libera Metal pra hot path.
-- **Single binary universal arm64** — sem Python, sem Docker, sem cluster.
+- Dense, MoE, and ternary model families need different runtime behavior.
+- Existing tools usually optimize one family or one workflow at a time.
+- Apple-specific capabilities such as MLX, unified memory, Metal, NEON, and ANE are often underused or exposed as low-level tuning work for the user.
 
-## Metricas (post-v1.0)
-- Latencia per-token vs llama.cpp em mesma quantizacao: >=1.5x mais rapido.
-- Hit-rate hot KV: >=80% em prompts longos (8k+).
-- Cobertura testes: >=80% touched files; correctness diff vs reference <= 1e-3 dense, <= 1e-2 BitNet.
-- 7 RAM tiers (16/24/32/48/64/96/128 GB) suportados com mode auto.
-- 9 adapters funcionando em pelo menos 1 chip M-series.
+US4 V6 Apple Edition exists to provide one runtime core with specialized adapters and hardware-aware execution on real Macs.
 
-## Nao-objetivos
-- Treinamento / fine-tuning (so inferencia).
-- Cloud / distributed inference (single-machine focus).
-- Suporte non-Apple (ver Windows Edition).
-- GUI desktop app (CLI + biblioteca).
+## Who it is for
 
-## Tese longo prazo
-Inferencia LLM se torna commodity local-first. Quem controla o runtime universal (multi-adapter + multi-backend + auto-tune) reduz custo e democratiza modelos SOTA. US4 V6 e o pilar Apple desse runtime.
+- ML engineers benchmarking local models on MacBook and Mac Studio hardware.
+- Researchers comparing dense, MoE, and ternary architectures with a shared correctness framework.
+- App developers embedding a privacy-first local runtime into Apple apps and tools.
+- Platform engineers operating local inference across managed Mac fleets.
+
+## Product thesis
+
+The winning local runtime on Apple Silicon will not be the most generic one. It will be the one that:
+
+- understands model architecture differences;
+- understands Apple hardware tiers;
+- treats correctness as a hard gate;
+- and can degrade gracefully across memory pressure instead of failing abruptly.
+
+## Differentiators
+
+- Universal runtime core with specialized adapters per model family.
+- MLX-first execution path, with Metal kernels only where measured gaps justify them.
+- Multi-tier KV lifecycle: hot, warm, cold, and summary.
+- MoE-aware expert paging and speculative expert prefetch.
+- Continuous batching for multiple local sessions.
+- Optional ANE offload on supported hardware for selected lightweight paths.
+- One CLI and one runtime contract across all supported families.
+
+## Success metrics
+
+These are **targets to validate**, not benchmark claims.
+
+- Correctness drift remains within task-specific tolerance before any optimization is enabled by default.
+- Dense and MoE adapters share a stable runtime contract by Sprint 08.
+- Runtime mode auto-selection covers 16 GB, 24 GB, 32 GB, 48 GB, 64 GB, 96 GB, and 128 GB memory tiers.
+- Apple-specific execution paths are measurable independently: MLX time, Metal time, NEON time, ANE time when available.
+- Public prerelease quality is reached by Sprint 07 alpha and Sprint 10 beta without breaking deterministic greedy decoding.
+
+## Runtime modes
+
+Canonical runtime modes:
+
+- `FULL`
+- `BALANCED_PLUS`
+- `DEGRADED`
+- `ULTRA_LOW`
+- `MICRO`
+- `MICRO_PLUS`
+- `NANO`
+
+Default RAM mapping:
+
+| Unified memory | Default mode |
+|---|---|
+| 128 GB | `FULL` |
+| 96 GB | `BALANCED_PLUS` |
+| 64 GB | `DEGRADED` |
+| 48 GB | `ULTRA_LOW` |
+| 32 GB | `MICRO` |
+| 24 GB | `MICRO_PLUS` |
+| 16 GB | `NANO` |
+
+## Non-goals
+
+- training and fine-tuning;
+- cloud or distributed inference;
+- non-Apple hardware in this edition;
+- claiming universal speed wins without benchmark and correctness evidence;
+- GUI-first product surface before CLI and library are stable.

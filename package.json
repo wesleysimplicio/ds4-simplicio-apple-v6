@@ -1,6 +1,6 @@
 {
   "name": "@wesleysimplicio/agentic-starter",
-  "version": "0.1.0",
+  "version": "0.1.5",
   "description": "AI-friendly project scaffold with AGENTS.md ecosystem (Claude Code, Codex, Copilot, Cursor, Aider, Hermes, OpenClaw). Specs as code, atomic tasks, automated Definition of Done, reusable skills, multi-agent ready.",
   "type": "commonjs",
   "bin": {
@@ -65,7 +65,13 @@
   "publishConfig": {
     "access": "public"
   },
+  "devDependencies": {
+    "@playwright/test": "^1.54.2"
+  },
   "scripts": {
+    "lint": "node --check bin/cli.js && node --check test/run-tests.js && node --check test/cli.test.js",
+    "test": "node test/run-tests.js",
+    "test:e2e": "npx playwright test",
     "test:cli": "node bin/cli.js --help",
     "pack:dry": "npm pack --dry-run",
     "release": "npm publish --access public"

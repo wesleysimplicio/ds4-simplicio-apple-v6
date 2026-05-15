@@ -1,74 +1,42 @@
-# .specs — Mapa de Navegação
+# .specs - Mapa de Navegacao
 
-Pasta concentra todo o contexto que o agente AI precisa pra trabalhar em **US4 V6 Apple Edition** (`us4-v6-simplicio-apple`). Quando algo não está aqui, o agente não vê. Specs como código de primeira classe.
+Esta pasta concentra o planejamento executavel de **US4 V6 Apple Edition**.
 
-Stack alvo: C++17/20 + CMake + MLX + Metal + NEON (Accelerate) + ANE (M5+) + GoogleTest + Playwright + Ralph Loop.
+Ela precisa refletir duas verdades ao mesmo tempo:
 
-## Ordem de leitura recomendada
+1. o produto final planejado eh um runtime C++/MLX/Metal para Apple Silicon;
+2. o estado atual do repo ainda e o bootstrap do starter, antes do scaffold do runtime.
 
-Tanto humano novo no time quanto agente devem percorrer nessa ordem:
+Sempre que houver tensao entre "estado atual do repositorio" e "estado planejado do produto", os docs precisam deixar isso explicito.
 
-1. **`product/VISION.md`** — por que o produto existe. Problema, diferencial, métricas.
-2. **`product/PERSONAS.md`** — pra quem o produto existe. Objetivos e frustrações.
-3. **`product/DOMAIN.md`** — vocabulário e entidades de runtime/adapters.
-4. **`architecture/DESIGN.md`** — diagrama macro, boundaries, stack, backends.
-5. **`architecture/PATTERNS.md`** — como escrever código aqui. Naming, estrutura, error handling, kernels.
-6. **`architecture/ADR-*.md`** — decisões arquiteturais e suas razões (criadas durante os sprints).
-7. **`workflow/WORKFLOW.md`** — branch strategy, PR, deploy, hotfix.
-8. **`workflow/CONTRIBUTING.md`** — como adicionar uma feature passo a passo.
-9. **`workflow/RELEASE.md`** — versionamento e release.
-10. **`sprints/BACKLOG.md`** — matriz dos 12 sprints.
-11. **`sprints/sprint-XX/SPRINT.md`** — sprint corrente.
-12. **`sprints/sprint-XX/NN-*.task.md`** — tasks ativas (criadas conforme sprint avança).
+## Ordem de leitura
 
-## Estrutura
+1. `product/VISION.md`
+2. `product/PERSONAS.md`
+3. `product/DOMAIN.md`
+4. `architecture/DESIGN.md`
+5. `architecture/PATTERNS.md`
+6. `architecture/ADR-*.md`
+7. `workflow/WORKFLOW.md`
+8. `workflow/CONTRIBUTING.md`
+9. `workflow/RELEASE.md`
+10. `sprints/BACKLOG.md`
+11. `sprints/TIMELINE.md`
+12. `sprints/sprint-XX/SPRINT.md`
+13. `sprints/sprint-XX/*.task.md`
 
-```
-.specs/
-├── README.md
-├── product/
-│   ├── VISION.md
-│   ├── DOMAIN.md
-│   └── PERSONAS.md
-├── architecture/
-│   ├── DESIGN.md            # preenchido no sprint-01 (T01.9)
-│   ├── PATTERNS.md          # preenchido incrementalmente nos sprints
-│   ├── ADR-template.md
-│   └── ADR-XXX-*.md         # criados durante os sprints
-├── workflow/
-│   ├── WORKFLOW.md
-│   ├── CONTRIBUTING.md
-│   └── RELEASE.md
-└── sprints/
-    ├── BACKLOG.md
-    ├── task-template.md
-    ├── sprint-01/SPRINT.md
-    ├── sprint-02/SPRINT.md
-    ├── ...
-    └── sprint-12/SPRINT.md
-```
+## Regras desta pasta
 
-## Convenções
+- Produto e arquitetura devem descrever o **runtime Apple real**, nao um template generico web.
+- Workflow e release devem distinguir claramente o que **ja existe** do que eh **planejado para sprints futuras**.
+- O sprint atual precisa ter task files suficientes para execucao sem adivinhacao.
+- Placeholder de template so e aceitavel em arquivos de template.
 
-- Markdown puro, cabeçalho `# Título` claro.
-- Diagramas em Mermaid embutido (`mermaid` code block).
-- Tabelas pra glossários e listas comparativas.
-- Bullets curtos, frases na voz ativa.
-- Idioma: pt-BR pro conteúdo, inglês pra nomes técnicos (variáveis, comandos, identifiers).
+## Estado esperado por area
 
-## Como adicionar nova spec
-
-- Decisão arquitetural irreversível -> nova `ADR-NNN-titulo.md` em `architecture/` baseada em `ADR-template.md`.
-- Nova feature grande -> task em `sprints/task-template.md` dentro de `sprints/sprint-XX/`.
-- Novo conceito de domínio -> entrada em `product/DOMAIN.md`.
-- Nova rotina de processo -> seção em `workflow/WORKFLOW.md` ou doc novo em `workflow/`.
-
-## Pra o agente
-
-Antes de implementar qualquer task:
-
-- Confirmar que leu VISION + DESIGN + PATTERNS + a task atual.
-- Procurar ADR relacionada antes de inventar decisão.
-- Atualizar DOMAIN se introduzir novo conceito de runtime/adapter.
-- Atualizar BACKLOG/SPRINT.md ao fechar/abrir item.
-- Logit-diff vs referência é gate de correctness — nunca pula.
+| Area | Deve refletir |
+|---|---|
+| `product/` | posicionamento, usuarios, capacidades e limites do runtime Apple |
+| `architecture/` | boundaries, contratos e padroes do runtime C++/MLX/Metal |
+| `workflow/` | processo real do repo hoje + transicao para o repo de runtime |
+| `sprints/` | roadmap, dependencias e corte executavel do sprint atual |

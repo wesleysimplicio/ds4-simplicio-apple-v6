@@ -1,68 +1,72 @@
-# Domain — US4 V6 Apple Edition
+# Domain - US4 V6 Apple Edition
 
-## Glossario
-- **Adapter** — modulo que adapta um family de modelos LLM (Qwen, Llama, DeepSeek MoE, etc.) a interface comum `IUS4V6Adapter`.
-- **Backend** — pilha de execucao computacional: CPU scalar, NEON, MLX, Metal, ANE.
-- **Runtime Mode** — perfil global de execucao baseado em recursos disponiveis: FULL / BALANCED / DEGRADED / ULTRA_LOW / MICRO / MICRO_PLUS.
-- **KV Cache** — armazenamento de tensores key/value de attention para evitar recomputacao.
-- **Hot-Cold KV Tiering** — KV pages em camadas: hot (unified memory), warm (RAM), cold (SSD), summary (compressed).
-- **MoE (Mixture of Experts)** — arquitetura com N experts e router que escolhe top-k experts por token.
-- **Expert Pager** — gerencia carregamento on-demand de experts MoE em unified memory.
-- **SP-MoE** — Speculative MoE prefetch: prediz proximos experts e carrega em paralelo.
-- **Speculative Decoding** — gera tokens com draft model pequeno, verifica com target model.
-- **P-EAGLE / EAGLE-3** — algoritmos de speculative decoding tree-verify.
-- **ANE** — Apple Neural Engine, accelerator dedicado (M-series).
-- **MLX** — Apple ML framework com unified memory + graph eval.
-- **Correctness Diff** — diferenca numerica vs reference impl (HF/PyTorch); gate de qualidade.
+## Core concepts
 
-## Entidades
-- `IUS4V6Adapter` — interface base de todos adapters.
-- `RuntimeMode` — enum de perfis.
-- `HardwareProbe` — descobre chip, RAM, MLX, ANE caps.
-- `BackendSelector` — escolhe backend por mode + adapter capability.
-- `KvPager` / `PrefixCache` / `Summarizer` — subsistema KV.
-- `Router` / `ExpertPager` / `SpeculativePrefetch` — subsistema MoE.
-- `ContinuousBatcher` / `SessionPool` — scheduling multi-sessao.
-- `AutoTuner` / `Profile` — tuning hardware-aware.
-- `Telemetry` — metricas (latencia, tokens/s, RAM peak, hit-rate, mode transitions).
+- **Adapter**: family-specific implementation behind the shared runtime contract.
+- **Backend**: execution path used for a given op or phase, such as MLX, Metal, NEON, scalar CPU, or optional ANE.
+- **Runtime mode**: memory and performance policy chosen from `FULL`, `BALANCED_PLUS`, `DEGRADED`, `ULTRA_LOW`, `MICRO`, `MICRO_PLUS`, `NANO`.
+- **Prefill**: prompt ingestion phase that builds attention state before decode.
+- **Decode loop**: token-by-token generation phase after prefill.
+- **KV cache**: attention state reused across decode steps.
+- **Hot/Warm/Cold/Summary KV**: tiered lifecycle for KV state across unified memory, compressed memory, SSD, and summarized state.
+- **Continuous batching**: scheduling decode steps from multiple sessions together.
+- **Expert pager**: on-demand MoE expert loading and eviction manager.
+- **Speculative expert prefetch**: predicting experts likely to be needed soon and loading them early.
+- **Correctness drift**: numeric or token-output deviation versus a safer reference path.
 
-## Diagrama
-```mermaid
-flowchart TB
-  CLI[us4-cli] --> Runtime
-  SDK[lib us4-v6.dylib] --> Runtime
-  Runtime --> Probe[HardwareProbe]
-  Runtime --> Mode[RuntimeMode Selector]
-  Runtime --> Adapter[IUS4V6Adapter impl]
-  Adapter --> KV[KvPager + PrefixCache]
-  Adapter --> MoE[Router + ExpertPager]
-  Adapter --> Backend[Backend dispatch]
-  Backend --> CPU[CPU scalar/NEON]
-  Backend --> Metal[Metal kernels]
-  Backend --> MLX[MLX graph]
-  Backend --> ANE[ANE offload M5+]
-  Runtime --> Sched[ContinuousBatcher]
-  Runtime --> Spec[Speculative P-EAGLE/EAGLE-3]
-  Runtime --> Tune[AutoTuner]
-  Runtime --> Telem[Telemetry]
-```
+## Primary entities
 
-## Invariantes
-- Toda chamada `IUS4V6Adapter::generate()` produz tokens determinsticamente para `(seed, temperature=0)`.
-- KV evictado pro SSD restaura identico ao mantido em hot.
-- Speculative decoding produz tokens **identicos** ao path non-speculative.
-- Mode transitions sao monotonicas dentro de uma sessao (so degrada, nunca volta sem reset).
-- Backend selecionado nunca pode quebrar correctness diff alem da tolerancia configurada.
+- `RuntimeContext`
+- `RuntimeSession`
+- `HardwareProbe`
+- `RuntimeModeSelector`
+- `AdapterRegistry`
+- `IUS4V6Adapter`
+- `BackendSelector`
+- `BackendExecutor`
+- `KvPager`
+- `PrefixCache`
+- `SessionSummarizer`
+- `ExpertPager`
+- `ContinuousBatcher`
+- `CorrectnessGuard`
+- `TelemetrySink`
 
-## Estados de runtime
-- `idle` — sem sessao ativa.
-- `loading` — adapter sendo carregado.
-- `ready` — pronto pra gerar.
-- `generating` — em decode (single ou batched).
-- `degraded` — mode rebaixado por pressao de RAM/thermal.
-- `error` — falha irrecuperavel (OOM, kernel crash) -> reset.
+## Runtime invariants
 
-## Termos vetados
-- "MoE expert offload" sem qualificar tier (use "offload to RAM" / "offload to SSD").
-- "Auto" sem qualificar o que e auto (mode? backend? tile size?).
-- "Fast" sem numero (use ">=X tokens/s em chip Y").
+- Greedy decoding with fixed seed must remain deterministic for the same backend and adapter configuration.
+- Any optimization path must be disableable.
+- Any backend path that exceeds drift tolerance must fall back to a safer path automatically.
+- Session isolation is mandatory: no cross-session KV contamination.
+- Tier migration must preserve semantic equivalence of the session state.
+
+## Backend selection rules
+
+Preferred order:
+
+1. `MLX`
+2. `Metal`
+3. `Metal + NEON`
+4. `NEON`
+5. scalar CPU
+
+ANE is opt-in and only used for explicitly supported lightweight paths.
+
+## Compatibility matrix
+
+| Memory tier | Main use |
+|---|---|
+| 128 GB | frontier dense and MoE, long context, multi-session |
+| 96 GB | broad high-end coverage with fewer constraints |
+| 64 GB | practical dense and selective MoE |
+| 48 GB | degraded frontier experimentation |
+| 32 GB | small and medium dense, strong BitNet/Ternary |
+| 24 GB | 1B to 4B dense and low-memory adapters |
+| 16 GB | `NANO` mode, smallest dense plus low-memory adapters |
+
+## Terms to avoid
+
+- "fast" without hardware, model, and metric.
+- "auto" without saying what is automatic.
+- "offload" without naming the destination tier or device.
+- "supported" when the real meaning is "planned."

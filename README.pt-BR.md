@@ -1,79 +1,139 @@
-# US4 V6 — Apple Edition
+# US4 V6 - Apple Edition
 
-> Universal State Runtime pra inferência LLM local em Apple Silicon (M1 → M5+).
+> Universal State Runtime para inferencia LLM local em Apple Silicon.
 > pt-BR. EN version: [README.md](README.md).
 
 ![us4-v6-simplicio-apple](us4-v6-simplicio-apple.PNG)
 
-## O que é
+## O que este repo eh
 
-US4 V6 é um runtime C++ que roda famílias modernas de LLM (DeepSeek MoE, Kimi MoE, MiniMax, GLM, Qwen, Llama, Gemma, BitNet, PT-BitNet Ternary) **localmente** em Apple Silicon, com dispatch adaptativo de backend entre **CPU scalar / NEON / Metal / MLX / ANE (M5+)**, paginação hot-cold de KV, paginação de experts MoE, decodificação especulativa, batching contínuo e auto-tuning ciente de hardware em 7 tiers de RAM (8 GB → 192 GB+).
+Este repositorio e a base de planejamento e bootstrap do **US4 V6 Apple Edition**, a edicao Apple Silicon do Universal State Runtime.
 
-Modos de runtime: `FULL`, `BALANCED`, `DEGRADED`, `ULTRA_LOW`, `MICRO`, `MICRO_PLUS` — auto-selecionados pelo probe de hardware no boot, sobrescrevíveis via flag de CLI.
+Hoje ele contem duas camadas:
 
-Spec master de referência: [`US4-V6-simplicio.md`](../US4-V6-simplicio.md).
+1. a **camada agentic-starter/bootstrap**, usada para estruturar trabalho com agentes;
+2. o **planejamento do projeto** do runtime C++ que sera construido ao longo de 12 sprints.
 
-## Stack
+O runtime C++ em si **ainda nao foi scaffoldado**. Esse trabalho comeca no Sprint 01.
 
-- C++17/20 + CMake
-- MLX (Apple ML eXecution framework)
-- Metal (kernels de compute, command queues, KV em unified memory)
-- NEON SIMD (ARMv8.4-A+)
-- ANE (Apple Neural Engine, offload de camada densa em M5+)
-- GoogleTest (unit), Playwright (CLI/UX E2E), Ralph Loop (fix/verify autônomo)
-- GitHub Actions (CI + gates de DoD)
+Fonte de referencia: [US4-V6-simplicio.md](US4-V6-simplicio.md).
 
-## Status
+## Escopo do produto
 
-**Planejamento completo.** Os 12 sprints estão scaffolded em [`.specs/sprints/`](.specs/sprints/). A implementação ainda não começou — `DESIGN.md`/`PATTERNS.md`/ADRs de arquitetura são preenchidos **durante** a primeira task de cada sprint, não antes.
+O US4 V6 Apple Edition mira inferencia local para:
+
+- adapters dense: Qwen, Llama, Gemma;
+- adapters MoE: DeepSeek, Kimi, MiniMax, GLM;
+- adapters low-memory: BitNet e PT-BitNet ternary;
+- backends Apple: MLX, Metal, NEON/Accelerate e ANE opcional em M5+.
+
+O produto eh explicitamente:
+
+- single-machine first;
+- correctness-first antes de qualquer claim de performance;
+- CLI + biblioteca, nao app GUI;
+- especifico para Apple nesta edicao.
+
+## Estado atual do repo
+
+**O planejamento agora esta preenchido no nivel de projeto.**
+
+- Os docs de produto definem visao, dominio, personas, modos de runtime e alvos de compatibilidade.
+- Os docs de arquitetura definem boundaries do runtime, contratos centrais e padroes de codigo para C++/Metal/MLX.
+- Os docs de workflow explicam como a implementacao sai do estado atual de starter/bootstrap e entra no layout real do runtime.
+- O Sprint 01 foi decomposto em tasks executaveis.
+
+O que ainda nao existe:
+
+- `runtime/`
+- `CMakeLists.txt`
+- `build/`
+- `us4-cli` de producao
+- automacao de release do runtime Apple
+
+Esses artefatos estao planejados, nao presentes.
+
+## Stack planejada
+
+- C++20 + CMake + Ninja
+- MLX como caminho primario de tensor/runtime no Apple Silicon
+- Metal para kernels quentes medidos que o MLX nao cobre bem
+- NEON / Accelerate como fallback de CPU
+- ANE como caminho opt-in em M5+
+- GoogleTest + CTest para unit e regression
+- Playwright para evidencia E2E da CLI
+
+## Modelo de trabalho
+
+O repo segue o ecossistema `AGENTS.md`. As instrucoes centrais vivem em:
+
+- [AGENTS.md](AGENTS.md)
+- [CLAUDE.md](CLAUDE.md)
+- [.github/copilot-instructions.md](.github/copilot-instructions.md)
+
+Todo trabalho tecnico deve seguir o loop:
+
+`ler task -> planejar -> editar -> format/lint -> unit -> e2e -> regression -> corrigir -> commit -> PR`
+
+## Roadmap
 
 | Sprint | Tema |
 |---|---|
-| 01 | Foundations & Skeleton |
+| 01 | Foundations and Skeleton |
 | 02 | CPU Scalar Baseline |
-| 03 | MLX + Metal Skeleton |
+| 03 | MLX and Metal Skeleton |
 | 04 | NEON Hot Paths |
-| 05 | BitNet + Ternary |
+| 05 | BitNet and Ternary |
 | 06 | KV Memory Architecture |
 | 07 | Llama Adapter |
-| 08 | MoE Foundation (DeepSeek + Kimi) |
-| 09 | MoE Advanced (MiniMax + GLM + SP-MoE) |
-| 10 | Batching + Speculative Decoding |
+| 08 | MoE Foundation |
+| 09 | MoE Advanced |
+| 10 | Continuous Batching and Speculative Decoding |
 | 11 | ANE M5+ Offload |
-| 12 | Auto-Tune + Release v1.0 |
+| 12 | Auto-Tune and v1.0 Release |
 
-Matriz completa: [`.specs/sprints/BACKLOG.md`](.specs/sprints/BACKLOG.md).
+Detalhes:
 
-## Como o agente trabalha aqui
+- [C:\Users\wesley.simplicio\Pictures\m\us4-v6-simplicio-apple\.specs\sprints\BACKLOG.md](C:/Users/wesley.simplicio/Pictures/m/us4-v6-simplicio-apple/.specs/sprints/BACKLOG.md)
+- [C:\Users\wesley.simplicio\Pictures\m\us4-v6-simplicio-apple\.specs\sprints\TIMELINE.md](C:/Users/wesley.simplicio/Pictures/m/us4-v6-simplicio-apple/.specs/sprints/TIMELINE.md)
 
-Este repo segue a convenção **Agentic Starter**. Arquivo master de instruções: [`AGENTS.md`](AGENTS.md) (espelhado em [`CLAUDE.md`](CLAUDE.md) e [`.github/copilot-instructions.md`](.github/copilot-instructions.md)).
+## Layout do repo hoje
 
-Toda task técnica passa pelo loop obrigatório: ler task → planejar → carregar contexto → editar → lint → unit → Playwright E2E (trace+screenshot+video) → corrigir → commit convencional (em inglês) → PR com checklist DoD.
-
-Gate de DoD (forçado por [`.github/workflows/dod.yml`](.github/workflows/dod.yml)): lint verde, unit verde com ≥80% de cobertura nos arquivos tocados, Playwright E2E verde com evidência, todos os AC marcados, ADR adicionado se decisão arquitetural, changelog atualizado se release-relevant.
-
-## Layout do repo
-
+```text
+.specs/        fonte de verdade do planejamento
+.agents/       agentes customizados
+.skills/       skills reutilizaveis
+.claude/       hooks/settings do Claude
+.codex/        hooks/settings do Codex
+.github/       CI/DoD do starter e templates
+bin/           CLI do agentic-starter
+test/          self-tests do starter
+tests/e2e/     placeholder Playwright do starter
 ```
-.specs/
-  product/       VISION.md, DOMAIN.md, PERSONAS.md
-  architecture/  DESIGN.md, PATTERNS.md, ADR-*.md (preenchidos durante os sprints)
-  workflow/      WORKFLOW.md, CONTRIBUTING.md, RELEASE.md
-  sprints/       BACKLOG.md, sprint-01..12/SPRINT.md
-.skills/         capacidades reutilizáveis dos agentes
-.agents/         sub-agentes customizados (ralph-loop, tdd, reviewer, architect)
-.claude/         settings + hooks (post-edit lint, pre-commit gate)
-.github/         workflows (ci.yml, dod.yml), templates de PR/Issue
-runtime/         código C++ (criado no sprint-01: core, adapters, memory, kv, cache, moe, metal, mlx, neon, ane, speculative, tuning, telemetry, benchmarks)
+
+## Layout futuro do runtime
+
+```text
+runtime/
+  core/
+  adapters/
+  memory/
+  kv/
+  cache/
+  moe/
+  metal/
+  mlx/
+  neon/
+  ane/
+  speculative/
+  tuning/
+  telemetry/
+  benchmarks/
 ```
 
 ## Fora de escopo
 
-- Inferência em nuvem/distribuída (foco em máquina única).
-- Treino/fine-tuning (somente inferência).
-- Hardware não-Apple → ver [US4 V6 Windows Edition](https://github.com/wesleysimplicio/us4-v6-simplicio-windows).
-- App desktop GUI (somente CLI + biblioteca).
-
-## Licença
-
-TBD (declarada antes do release v1.0 no Sprint 12).
+- inferencia em nuvem ou distribuida;
+- treino ou fine-tuning;
+- hardware nao-Apple nesta edicao;
+- shell GUI antes de CLI e biblioteca estarem estaveis.

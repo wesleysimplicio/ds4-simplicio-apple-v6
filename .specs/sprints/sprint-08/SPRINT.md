@@ -26,6 +26,6 @@ MoE: DeepSeek + Kimi adapters. Expert pager (carrega experts on-demand). Top-k r
 - Correctness: diff vs HF reference <= 1e-3.
 
 ## DoD
-- DeepSeek + Kimi em FULL/BALANCED.
+- DeepSeek + Kimi em FULL/BALANCED_PLUS.
 - Coverage >=80% em `runtime/moe` + adapters MoE.
 - ADR-006 MoE expert paging strategy.

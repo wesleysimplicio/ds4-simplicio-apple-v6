@@ -27,7 +27,7 @@ Integrar MLX e Metal. Command queue + kernels matmul Metal, MLX bridge, KV em me
 - Correctness: diff Metal vs CPU <= 5e-3.
 
 ## DoD
-- Metal habilitado em FULL/BALANCED.
+- Metal habilitado em FULL/BALANCED_PLUS.
 - Coverage >=80% em `runtime/metal` + `runtime/mlx`.
 - ADR-003 Backend selection strategy.
 

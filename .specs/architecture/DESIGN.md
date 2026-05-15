@@ -1,177 +1,197 @@
-# Design — `<PRODUCT_NAME>`
+# Design - US4 V6 Apple Edition
 
-> Visão geral da arquitetura. Documento vivo. Decisões pontuais ficam em ADRs (`./ADR-*.md`).
-> Audiência: devs novos no projeto, agents AI, revisores externos.
+## 1. Context
 
----
+US4 V6 Apple Edition is a local runtime, not a web platform.
 
-## 1. Contexto de sistema
+Its outer surfaces are:
 
-Visão de alto nível: quem fala com quem.
+- `us4-cli`
+- embedding hosts such as local Apple apps
+- optional local API shim in future sprints, if needed
 
 ```mermaid
-graph LR
-  user([Usuário final])
-  admin([Admin / operador])
-  agent([Agent AI / cliente API])
+flowchart LR
+  cli["us4-cli"]
+  host["Embedding host"]
+  profiles["Model and hardware profiles"]
+  runtime["Runtime Core"]
+  adapters["Adapter Registry"]
+  backends["Backend Selector"]
+  mem["Memory System"]
+  telem["Telemetry and Correctness"]
 
-  subgraph Sistema_PRODUCT [<PRODUCT_NAME>]
-    web[Web app]
-    api[API HTTP]
-    worker[Worker assíncrono]
-    db[(Banco de dados)]
-    cache[(Cache)]
-    queue[/Fila de mensagens/]
-  end
-
-  thirdparty([Provedores externos<br/>auth, pagamento, email])
-
-  user --> web
-  admin --> web
-  agent --> api
-  web --> api
-  api --> db
-  api --> cache
-  api --> queue
-  queue --> worker
-  worker --> db
-  worker --> thirdparty
-  api --> thirdparty
+  cli --> runtime
+  host --> runtime
+  profiles --> runtime
+  runtime --> adapters
+  runtime --> backends
+  runtime --> mem
+  runtime --> telem
+  backends --> mlx["MLX"]
+  backends --> metal["Metal"]
+  backends --> neon["NEON / Accelerate"]
+  backends --> ane["ANE opt-in"]
 ```
 
-Notas:
-- `web` é cliente burro: chama `api`. Sem lógica de domínio.
-- `api` é o único caminho de escrita no `db`.
-- `worker` consome `queue` para tarefas longas (envio de email, processamento batch, sync com terceiros).
-- Provedores externos sempre via adapter — nunca cliente HTTP solto no domínio.
+## 2. Main boundaries
 
----
+| Boundary | Responsibility |
+|---|---|
+| Interface | CLI parsing, config loading, JSON/text output |
+| Runtime Core | session lifecycle, prefill/decode orchestration, policy enforcement |
+| Model Adapters | family-specific layout, quant strategy, memory plan, capability flags |
+| Execution Backends | MLX, Metal, NEON, scalar CPU, optional ANE paths |
+| Memory System | KV lifecycle, prefix cache, SSD cold tier, expert paging |
+| Validation and Telemetry | correctness gates, drift reports, throughput and memory metrics |
 
-## 2. Componentes (zoom)
+Dependencies point inward. Adapters do not own the scheduler. Backends do not define product policy.
 
-Detalhe interno do `<PRODUCT_NAME>`:
+## 3. Canonical runtime flow
 
 ```mermaid
 flowchart TD
-  subgraph Edge [Edge / Boundary]
-    router[HTTP Router]
-    auth[Auth middleware]
-    validate[Schema validator]
-  end
-
-  subgraph App [Camada de aplicacao]
-    handler[Handlers / Controllers]
-    usecase[Use cases]
-  end
-
-  subgraph Domain [Dominio]
-    entity[Entidades]
-    rule[Regras de negocio]
-  end
-
-  subgraph Infra [Infraestrutura]
-    repo[Repositorios]
-    adapter[Adapters externos]
-    log[Logger estruturado]
-  end
-
-  router --> auth --> validate --> handler
-  handler --> usecase
-  usecase --> rule
-  usecase --> repo
-  usecase --> adapter
-  rule --> entity
-  repo --> entity
-  handler --> log
-  usecase --> log
-  adapter --> log
+  start["CLI or host request"] --> probe["HardwareProbe"]
+  probe --> mode["RuntimeModeSelector"]
+  mode --> registry["AdapterRegistry resolve"]
+  registry --> plan["Adapter builds quant and memory plan"]
+  plan --> backend["BackendSelector chooses execution path"]
+  backend --> prefill["Prefill"]
+  prefill --> kv["KV and PrefixCache"]
+  kv --> decode["Decode loop / ContinuousBatcher"]
+  decode --> pager["KV pager and ExpertPager"]
+  pager --> guard["CorrectnessGuard"]
+  guard --> telem["TelemetrySink"]
 ```
 
-Princípio: dependências apontam para dentro. Domínio não conhece infra.
+## 4. Core contracts
 
----
+### `RuntimeSession`
 
-## 3. Boundaries
+Owns:
 
-| Boundary | Responsabilidade | Regra |
-|----------|------------------|-------|
-| Edge | Receber request, validar shape, autenticar | Rejeita cedo. Não chama domínio com input cru. |
-| App (use case) | Orquestrar passos, transação, eventos | Stateless. Recebe input já validado. |
-| Domain | Regras invariantes, entidades, value objects | Sem IO. Sem framework. Testável puro. |
-| Infra | Persistência, terceiros, logging | Implementa interfaces que o domínio define. |
+- prompt state;
+- generation options;
+- KV ownership;
+- mode transitions that can only degrade within the same session.
 
-Cruzar boundary errado = code smell. Repositório chamando handler é vermelho.
+### `IUS4V6Adapter`
 
----
+Each adapter declares:
 
-## 4. Stack
+- family and architecture type;
+- supported features such as MoE, GQA, MLA, multimodal, ternary;
+- recommended quant strategy per hardware profile;
+- memory plan per runtime mode;
+- backend capabilities and constraints.
 
-> Placeholder: substituir conforme `<STACK>` real do projeto.
+### `BackendExecutor`
 
-| Camada | Tecnologia |
-|--------|------------|
-| Linguagem | `<STACK>` |
-| Framework HTTP | `<STACK>` |
-| Banco | `<STACK>` (relacional / documento / KV) |
-| Cache | `<STACK>` |
-| Fila | `<STACK>` |
-| Testes | unit, integration, e2e (Playwright) |
-| CI | GitHub Actions (`.github/workflows/ci.yml`) |
-| Observabilidade | logs estruturados + métricas + traces |
+Responsible for:
 
-Mudou stack? Abrir ADR. Não trocar silencioso.
+- op dispatch;
+- buffer ownership at the backend boundary;
+- fallback to safer paths when drift or unsupported ops appear.
 
----
+### `MemoryGovernor`
 
-## 5. Decisões principais
+Responsible for:
 
-Decisões arquiteturais relevantes ficam em ADRs versionados. Resumo:
+- hot/warm/cold/summary transitions;
+- memory pressure reactions;
+- expert and KV eviction policy;
+- preserving correctness while degrading gracefully.
 
-- [ADR-001](./ADR-001-example.md) — Adotar trunk-based development.
-- [ADR-002](./ADR-002-example.md) — `<placeholder próxima decisão>`.
+### `CorrectnessGuard`
 
-Toda decisão que afeta mais de um componente ou trava reversibilidade vira ADR. Detalhe e processo: ver `ADR-template.md`.
+Responsible for:
 
----
+- drift thresholds per task and benchmark profile;
+- disabling aggressive paths when tolerance is exceeded;
+- emitting explicit reasons for fallback.
 
-## 6. Fluxo de uma request típica
+## 5. Planned stack
 
-1. Cliente bate em `api/v1/<recurso>`.
-2. Router casa rota e middleware de auth valida token.
-3. Validator checa schema (rejeita 400 se inválido).
-4. Handler chama use case com DTO já tipado.
-5. Use case carrega entidades via repositório.
-6. Domínio executa regra (pode levantar erro de negócio).
-7. Use case persiste mudança e enfileira eventos.
-8. Handler serializa resposta.
-9. Logger registra evento estruturado (sem PII).
+| Layer | Technology |
+|---|---|
+| Language | C++20 |
+| Build | CMake 3.27+ + Ninja |
+| Primary tensor/runtime path | MLX |
+| Custom acceleration | Metal |
+| CPU fallback | NEON / Accelerate / scalar |
+| Optional accelerator | ANE on M5+ |
+| Unit and regression | GoogleTest + CTest |
+| CLI E2E | Playwright |
 
-Falhou no passo 3? Retorna sem tocar domínio. Falhou no 6? Retorna 422 com código de erro de domínio.
+## 6. Planned repo layout
 
----
+```text
+runtime/
+  core/
+  adapters/
+  memory/
+  kv/
+  cache/
+  moe/
+  metal/
+  mlx/
+  neon/
+  ane/
+  speculative/
+  tuning/
+  telemetry/
+  benchmarks/
+```
 
-## 7. Não-objetivos
+## 7. MVP and phases
 
-- Não suportar multi-tenant antes de validar single-tenant.
-- Não escalar prematuramente: monolito modular antes de microserviços enquanto time `<TEAM>` for pequeno.
-- Não acoplar UI a regras de domínio.
-- Não duplicar tipos entre `web` e `api`: contrato compartilhado.
+### MVP runtime slice
 
----
+- `us4-cli --version`
+- `us4-cli --probe`
+- hardware probe
+- runtime mode selection
+- adapter contract
+- Qwen/Gemma small dense baseline
+- MLX primary path plus safe CPU fallback
+- correctness fixtures for dense baseline
 
-## 8. Observabilidade
+### Phase 2
 
-- Logs estruturados em JSON, com `trace_id` propagado entre serviços.
-- Níveis: `error`, `warn`, `info`, `debug`. Padrão prod = `info`.
-- Métricas RED (rate, errors, duration) por endpoint.
-- Tracing distribuído cobrindo edge, use case, infra.
-- PII nunca em log. Ver `PATTERNS.md` seção logging.
+- Metal measured kernels
+- prefix cache
+- unified-memory KV
+- continuous batching baseline
 
----
+### Phase 3
 
-## 9. Como evoluir este documento
+- MoE adapters
+- expert pager
+- speculative expert prefetch
 
-- Mudança pequena (corrigir typo, atualizar diagrama existente): PR direto.
-- Mudança estrutural (novo componente, novo boundary): abrir ADR, depois atualizar `DESIGN.md`.
-- Renomear conceito: atualizar glossário em `.specs/product/DOMAIN.md` no mesmo PR.
-- Domínio `<DOMAIN>` específico: documentar invariantes em `DOMAIN.md`, não aqui.
+### Phase 4
+
+- speculative decoding
+- ANE opt-in
+- multimodal cache
+- release hardening
+
+## 8. Non-goals for architecture
+
+- no symmetric multi-backend ideology; MLX is the default path;
+- no performance optimization that outranks correctness;
+- no giant frontier MoE as the first vertical slice;
+- no new third-party dependency without explicit approval.
+
+## 9. ADR map
+
+Priority ADRs:
+
+- `ADR-001-mlx-primary-backend.md`
+- `ADR-002-runtime-boundaries-and-adapter-contract.md`
+
+Future likely ADRs:
+
+- KV tiering and SSD cold cache
+- correctness thresholds and fallback policy
+- ANE eligibility rules
