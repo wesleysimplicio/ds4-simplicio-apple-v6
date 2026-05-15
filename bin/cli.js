@@ -6,21 +6,15 @@
  *   npx @wesleysimplicio/agentic-starter
  *
  * Behavior (mirror of bootstrap.sh / bootstrap.ps1):
- *   1. Auto-detects PRODUCT_NAME (cwd basename), DOMAIN ("generico"),
- *      TEAM ("Plataforma"), STACK (Node/.NET/Python/Go/Rust/Flutter/PHP/...).
- *      INIT.md refines TEAM/DOMAIN with the human afterwards.
- *   2. Asks only TWO questions:
+ *   1. Auto-detects PRODUCT_NAME from manifests, STACK, and whether the repo
+ *      follows the projects/ monorepo convention.
+ *   2. Asks only two operational questions:
  *        - Append recommended ignore entries to .gitignore? (y/N)
  *        - Which CLI/LLM should run INIT.md?
- *   3. Substitutes <PRODUCT_NAME>/<TEAM>/<DOMAIN>/<STACK> ONLY inside
- *      starter-managed paths AND only when the file actually contains
- *      a placeholder (protects user .razor/.cs/.ts/.py/package.json).
- *   4. NEVER overwrites pre-existing user files. Existing instruction
- *      files (AGENTS.md/CLAUDE.md/INIT.md/copilot-instructions.md) are
- *      preserved AND flagged in .starter-meta.json so INIT.md can read
- *      them and improve in place (essence preserved).
- *   5. .gitignore: never overwritten. Appended on opt-in, created if missing.
- *   6. Hands off to the chosen CLI to execute INIT.md.
+ *      It never asks about team, domain, vision, personas, or product purpose.
+ *   3. Substitutes <PRODUCT_NAME>/<STACK> only inside starter-managed paths.
+ *   4. Never overwrites pre-existing user instruction files.
+ *   5. Hands off to the chosen CLI to execute INIT.md.
  *
  * Pure Node.js. No bash dependency. Works on macOS, Linux, and Windows.
  */
@@ -28,6 +22,7 @@
 'use strict';
 
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 const readline = require('node:readline');
 const { spawn, spawnSync } = require('node:child_process');
@@ -76,13 +71,12 @@ const STARTER_ROOT_FILES = [
 ];
 
 const TEXT_EXTS = new Set(['.md', '.json', '.toml', '.yml', '.yaml', '.ts']);
-
 const WALK_SKIP_DIRS = new Set([
   'node_modules', '.git', 'dist', 'build', 'out',
   '.next', '.nuxt', 'coverage', 'playwright-report', 'test-results',
 ]);
 
-const RECOMMENDED_IGNORES = `# === Agentic Starter (auto-managed) — do not remove this header ===
+const RECOMMENDED_IGNORES = `# === Agentic Starter (auto-managed) - do not remove this header ===
 # Local agent state and ephemeral artifacts created by the starter.
 .starter-meta.json
 .codex/local
@@ -204,22 +198,25 @@ Cargo.lock           text -diff
 `;
 
 const CLI_OPTS = [
-  { key: 'claude',   label: 'Claude Code',                                                       cmd: 'claude' },
-  { key: 'codex',    label: 'Codex CLI',                                                         cmd: 'codex' },
-  { key: 'copilot',  label: 'GitHub Copilot CLI (chat — no agent loop)',                         cmd: 'gh' },
-  { key: 'cursor',   label: 'Cursor Agent (cursor-agent)',                                       cmd: 'cursor-agent' },
-  { key: 'deepseek', label: 'Deepseek (via aider --model deepseek/deepseek-coder)',              cmd: 'aider' },
-  { key: 'kimi',     label: 'Kimi K2.6 (via aider --model openrouter/moonshotai/kimi-k2)',       cmd: 'aider' },
-  { key: 'minimax',  label: 'MiniMax M2.7 (via aider --model openrouter/minimax/minimax-text-01)', cmd: 'aider' },
-  { key: 'glm',      label: 'GLM 5.1 (via aider --model openrouter/z-ai/glm-4.5)',               cmd: 'aider' },
-  { key: 'hermes',   label: 'Hermes Agent (Nous Research)',                                      cmd: 'hermes' },
-  { key: 'openclaw', label: 'OpenClaw',                                                          cmd: 'openclaw' },
-  { key: 'aider',    label: 'Aider (pick model interactively)',                                  cmd: 'aider' },
-  { key: 'other',    label: 'Other / manual (copy prompt to clipboard)',                         cmd: '' },
-  { key: 'skip',     label: 'Skip — I will run INIT.md later',                                   cmd: '' },
+  { key: 'claude', label: 'Claude Code', cmd: 'claude' },
+  { key: 'codex', label: 'Codex CLI', cmd: 'codex' },
+  { key: 'cursor', label: 'Cursor Agent (cursor-agent)', cmd: 'cursor-agent' },
+  { key: 'vscode', label: 'VS Code Agent Mode (paste into Chat)', cmd: 'code' },
+  { key: 'windsurf', label: 'Windsurf / Cascade (Codeium)', cmd: 'windsurf' },
+  { key: 'kiro', label: 'Kiro (AWS, paste into Chat)', cmd: 'kiro' },
+  { key: 'copilot', label: 'GitHub Copilot CLI (chat - no agent loop)', cmd: 'gh' },
+  { key: 'deepseek', label: 'Deepseek (via aider --model deepseek/deepseek-coder)', cmd: 'aider' },
+  { key: 'kimi', label: 'Kimi K2.6 (via aider --model openrouter/moonshotai/kimi-k2)', cmd: 'aider' },
+  { key: 'minimax', label: 'MiniMax M2.7 (via aider --model openrouter/minimax/minimax-text-01)', cmd: 'aider' },
+  { key: 'glm', label: 'GLM 5.1 (via aider --model openrouter/z-ai/glm-4.5)', cmd: 'aider' },
+  { key: 'hermes', label: 'Hermes Agent (Nous Research)', cmd: 'hermes' },
+  { key: 'openclaw', label: 'OpenClaw', cmd: 'openclaw' },
+  { key: 'aider', label: 'Aider (pick model interactively)', cmd: 'aider' },
+  { key: 'other', label: 'Other / manual (copy prompt to clipboard)', cmd: '' },
+  { key: 'skip', label: 'Skip - I will run INIT.md later', cmd: '' },
 ];
 
-const INIT_PROMPT = 'Read INIT.md and execute it. Do NOT modify any user source files (.razor, .cs, .ts, .py, .go, .rs, package.json, etc). Only write inside .specs/, .agents/, .skills/, .claude/, .codex/, .github/copilot*, .github/workflows/dod.yml plus root AGENTS.md/CLAUDE.md/INIT.md/README*.md. If AGENTS.md/CLAUDE.md/copilot-instructions.md already existed before bootstrap (see .starter-meta.json), READ them and IMPROVE in place — preserve their essence. Ask the human only the questions listed in .starter-meta.json -> init_must_ask (team, domain, vision oneliner, personas). Use parallel multi-agents.';
+const INIT_PROMPT = 'Read INIT.md and execute it. Do NOT modify any user source files (.razor, .cs, .ts, .py, .go, .rs, package.json, etc). Only write inside .specs/, .agents/, .skills/, .claude/, .codex/, .github/copilot*, .github/workflows/dod.yml plus root AGENTS.md/CLAUDE.md/INIT.md/README*.md. If AGENTS.md/CLAUDE.md/copilot-instructions.md already existed before bootstrap (see .starter-meta.json), READ them and IMPROVE in place - preserve their essence. DO NOT ask the human about team, domain, vision, personas, or product purpose: infer ALL of them by reading the codebase (README, package.json/angular.json/*.csproj/pyproject.toml/etc, entry points, routes, tests, env.example). Default persona is "developer"; additional personas must be derived from code (auth roles, route guards, UI flows, customer-facing copy). Honor projects/ convention: if .starter-meta.json.project_mode == "monorepo", iterate over .starter-meta.json.projects[] and produce per-project .specs/. Use parallel multi-agents.';
 
 const argv = process.argv.slice(2);
 const opts = {
@@ -230,33 +227,179 @@ const opts = {
   skipMeta: false,
   cli: '',
   appendGitignore: '',
+  json: false,
+  probe: false,
+  mode: '',
+  showHelp: false,
+  showVersion: false,
 };
 
 for (let i = 0; i < argv.length; i++) {
-  const a = argv[i];
-  switch (a) {
+  const arg = argv[i];
+  switch (arg) {
     case '-y':
-    case '--yes':              opts.yes = true; break;
+    case '--yes':
+      opts.yes = true;
+      break;
     case '-f':
-    case '--force':            opts.force = true; break;
-    case '--dry-run':          opts.dryRun = true; break;
-    case '--silent':           opts.silent = true; break;
-    case '--skip-meta':        opts.skipMeta = true; break;
-    case '--cli':              opts.cli = argv[++i]; break;
-    case '--append-gitignore': opts.appendGitignore = argv[++i]; break;
+    case '--force':
+      opts.force = true;
+      break;
+    case '--dry-run':
+      opts.dryRun = true;
+      break;
+    case '--silent':
+      opts.silent = true;
+      break;
+    case '--skip-meta':
+      opts.skipMeta = true;
+      break;
+    case '--cli':
+      opts.cli = argv[++i];
+      break;
+    case '--append-gitignore':
+      opts.appendGitignore = argv[++i];
+      break;
+    case '--json':
+      opts.json = true;
+      break;
+    case '--probe':
+      opts.probe = true;
+      break;
+    case '--mode':
+      opts.mode = argv[++i];
+      if (!opts.mode) {
+        console.error('Missing value for --mode.');
+        process.exit(2);
+      }
+      break;
     case '-v':
     case '--version':
-      console.log(PKG.version);
-      process.exit(0);
+      opts.showVersion = true;
+      break;
     case '-h':
     case '--help':
-      printHelp();
-      process.exit(0);
+      opts.showHelp = true;
+      break;
     default:
-      console.error(`Unknown flag: ${a}`);
+      console.error(`Unknown flag: ${arg}`);
       console.error('Run with --help for usage.');
       process.exit(2);
   }
+}
+
+const kRuntimeModes = [
+  'FULL',
+  'BALANCED_PLUS',
+  'DEGRADED',
+  'ULTRA_LOW',
+  'MICRO',
+  'MICRO_PLUS',
+  'NANO',
+];
+
+function normalizeMemoryGiB(totalBytes) {
+  return Math.round(totalBytes / (1024 ** 3));
+}
+
+function selectRuntimeMode(totalMemoryGiB) {
+  if (totalMemoryGiB >= 128) return 'FULL';
+  if (totalMemoryGiB >= 96) return 'BALANCED_PLUS';
+  if (totalMemoryGiB >= 64) return 'DEGRADED';
+  if (totalMemoryGiB >= 48) return 'ULTRA_LOW';
+  if (totalMemoryGiB >= 32) return 'MICRO';
+  if (totalMemoryGiB >= 24) return 'MICRO_PLUS';
+  return 'NANO';
+}
+
+function detectAneEligibility(cpuModel, platform) {
+  if (platform !== 'darwin') return false;
+  return /\bM5\b/i.test(cpuModel);
+}
+
+function buildProbe(modeArg) {
+  const cpuInfo = os.cpus();
+  const cpuModel = cpuInfo[0] ? cpuInfo[0].model : 'unknown';
+  const totalMemoryBytes = os.totalmem();
+  const totalMemoryGiB = normalizeMemoryGiB(totalMemoryBytes);
+  const selectedMode = modeArg === 'auto' || !modeArg
+    ? selectRuntimeMode(totalMemoryGiB)
+    : modeArg.toUpperCase();
+  const platform = process.platform;
+  const arch = process.arch;
+  const appleSilicon = platform === 'darwin' && arch === 'arm64';
+  const probe = {
+    cli: 'us4-cli',
+    version: PKG.version,
+    probe: {
+      platform,
+      arch,
+      cpuModel,
+      logicalCores: cpuInfo.length,
+      totalMemoryBytes,
+      totalMemoryGiB,
+      appleSilicon,
+      aneEligible: detectAneEligibility(cpuModel, platform),
+    },
+    mode: {
+      requested: modeArg || 'auto',
+      selected: selectedMode,
+      taxonomy: kRuntimeModes,
+      source: 'memory-tier',
+    },
+  };
+
+  return probe;
+}
+
+function printRuntimeText(probe, includeProbeDetails) {
+  const lines = [
+    `us4-cli ${probe.version}`,
+    `mode: ${probe.mode.selected} (${probe.mode.source})`,
+  ];
+
+  if (includeProbeDetails) {
+    lines.push(`platform: ${probe.probe.platform}/${probe.probe.arch}`);
+    lines.push(`cpu: ${probe.probe.cpuModel}`);
+    lines.push(`logical cores: ${probe.probe.logicalCores}`);
+    lines.push(`memory: ${probe.probe.totalMemoryGiB} GiB`);
+    lines.push(`apple silicon: ${probe.probe.appleSilicon ? 'yes' : 'no'}`);
+    lines.push(`ane eligible: ${probe.probe.aneEligible ? 'yes' : 'no'}`);
+  }
+
+  console.log(lines.join('\n'));
+}
+
+function handleRuntimeFlags() {
+  if (opts.mode && opts.mode !== 'auto') {
+    console.error(`Unsupported mode selector: ${opts.mode}. Only --mode auto is available in Sprint 01.`);
+    process.exit(2);
+  }
+
+  if (opts.showVersion && !opts.probe && !opts.mode) {
+    if (opts.json) {
+      console.log(JSON.stringify({ cli: 'us4-cli', version: PKG.version }, null, 2));
+      return true;
+    }
+    console.log(PKG.version);
+    return true;
+  }
+
+  if (!opts.probe && !opts.mode) {
+    if (opts.json) {
+      console.error('--json requires --version, --probe, or --mode auto.');
+      process.exit(2);
+    }
+    return false;
+  }
+
+  const probe = buildProbe(opts.mode || 'auto');
+  if (opts.json) {
+    console.log(JSON.stringify(probe, null, 2));
+  } else {
+    printRuntimeText(probe, opts.probe);
+  }
+  return true;
 }
 
 function printHelp() {
@@ -268,20 +411,27 @@ USAGE
   npx @wesleysimplicio/agentic-starter [options]
 
 OPTIONS
+  --probe                     Print Sprint 01 hardware probe summary
+  --mode auto                 Select runtime mode from the current memory tier
+  --json                      Emit JSON for --version, --probe, or --mode auto
   -y, --yes                   Non-interactive (defaults: no gitignore append, skip CLI handoff)
   -f, --force                 Overwrite starter template files (NEVER touches user
                               instruction files: AGENTS.md, CLAUDE.md, INIT.md,
                               .github/copilot-instructions.md, .gitignore)
   --dry-run                   Print actions without writing files
   --skip-meta                 Do not write .starter-meta.json
-  --cli <key>                 Pick CLI for INIT.md handoff (claude|codex|copilot|cursor|
-                              deepseek|kimi|minimax|glm|hermes|openclaw|aider|other|skip)
+  --cli <key>                 Pick CLI for INIT.md handoff (claude|codex|cursor|vscode|
+                              windsurf|kiro|copilot|deepseek|kimi|minimax|glm|
+                              hermes|openclaw|aider|other|skip)
   --append-gitignore <yes|no> Append recommended ignores to .gitignore (or create it)
   --silent                    Minimal output
   -v, --version               Print version
   -h, --help                  Show this help
 
 EXAMPLES
+  node bin/cli.js --version --json
+  node bin/cli.js --probe
+  node bin/cli.js --probe --mode auto --json
   npx @wesleysimplicio/agentic-starter
   npx @wesleysimplicio/agentic-starter --yes
   npx @wesleysimplicio/agentic-starter --yes --cli claude --append-gitignore yes
@@ -291,50 +441,154 @@ DOCS
 `);
 }
 
-const log = (...a) => { if (!opts.silent) console.log(...a); };
-const err = (...a) => console.error(...a);
+if (opts.showHelp) {
+  printHelp();
+  process.exit(0);
+}
 
-function readSafe(p) { try { return fs.readFileSync(p, 'utf8'); } catch { return ''; } }
-function existsHere(rel) { return fs.existsSync(path.join(CWD, rel)); }
-function listCwd() { try { return fs.readdirSync(CWD); } catch { return []; } }
+if (handleRuntimeFlags()) {
+  process.exit(0);
+}
+
+const log = (...args) => { if (!opts.silent) console.log(...args); };
+const err = (...args) => console.error(...args);
+
+function readSafe(file) {
+  try {
+    return fs.readFileSync(file, 'utf8');
+  } catch {
+    return '';
+  }
+}
+
+function existsIn(baseDir, rel) {
+  return fs.existsSync(path.join(baseDir, rel));
+}
+
+function listDir(baseDir) {
+  try {
+    return fs.readdirSync(baseDir);
+  } catch {
+    return [];
+  }
+}
+
 function commandExists(cmd) {
   if (!cmd) return false;
   const which = process.platform === 'win32' ? 'where' : 'which';
-  const r = spawnSync(which, [cmd], { stdio: 'ignore' });
-  return r.status === 0;
+  const result = spawnSync(which, [cmd], { stdio: 'ignore' });
+  return result.status === 0;
 }
 
-function detectStack() {
-  if (existsHere('package.json')) {
-    const pj = readSafe(path.join(CWD, 'package.json'));
-    if (/"next"\s*:/.test(pj))                    return 'next-ts';
-    if (/"react"\s*:/.test(pj))                   return 'react-ts';
-    if (/"vue"\s*:/.test(pj))                     return 'vue-ts';
-    if (/"@nestjs\/core"|"nestjs"\s*:/.test(pj))  return 'nestjs';
-    if (/"express"\s*:/.test(pj))                 return 'node-express';
+function readJsonField(file, field) {
+  const content = readSafe(file);
+  const match = content.match(new RegExp(`"${field}"\\s*:\\s*"([^"]+)"`));
+  return match ? match[1] : '';
+}
+
+function readTomlField(file, field) {
+  const content = readSafe(file);
+  const match = content.match(new RegExp(`^\\s*${field}\\s*=\\s*"([^"]+)"`, 'm'));
+  return match ? match[1] : '';
+}
+
+function readYamlField(file, field) {
+  const content = readSafe(file);
+  const match = content.match(new RegExp(`^\\s*${field}\\s*:\\s*"?([^"\\s#]+)"?`, 'm'));
+  return match ? match[1] : '';
+}
+
+function detectStack(baseDir = CWD) {
+  const files = listDir(baseDir);
+  if (existsIn(baseDir, 'angular.json')) return 'angular';
+  if (existsIn(baseDir, 'package.json')) {
+    const pkg = readSafe(path.join(baseDir, 'package.json'));
+    if (/"next"\s*:/.test(pkg)) return 'next-ts';
+    if (/"@angular\/core"\s*:/.test(pkg)) return 'angular';
+    if (/"react"\s*:/.test(pkg)) return 'react-ts';
+    if (/"vue"\s*:/.test(pkg)) return 'vue-ts';
+    if (/"@nestjs\/core"|"nestjs"\s*:/.test(pkg)) return 'nestjs';
+    if (/"express"\s*:/.test(pkg)) return 'node-express';
     return 'node-ts';
   }
-  const files = listCwd();
-  if (files.some(f => f.endsWith('.csproj') || f.endsWith('.sln'))) return 'dotnet';
-  if (existsHere('pyproject.toml') || existsHere('requirements.txt')) {
-    const py = readSafe(path.join(CWD, 'pyproject.toml')) + readSafe(path.join(CWD, 'requirements.txt'));
-    if (/django/i.test(py))   return 'python-django';
-    if (/fastapi/i.test(py))  return 'python-fastapi';
-    if (/flask/i.test(py))    return 'python-flask';
+  if (files.some((file) => file.endsWith('.csproj') || file.endsWith('.sln'))) return 'dotnet';
+  if (existsIn(baseDir, 'pyproject.toml') || existsIn(baseDir, 'requirements.txt')) {
+    const py = readSafe(path.join(baseDir, 'pyproject.toml')) + readSafe(path.join(baseDir, 'requirements.txt'));
+    if (/django/i.test(py)) return 'python-django';
+    if (/fastapi/i.test(py)) return 'python-fastapi';
+    if (/flask/i.test(py)) return 'python-flask';
     return 'python';
   }
-  if (existsHere('go.mod'))         return 'go';
-  if (existsHere('Cargo.toml'))     return 'rust';
-  if (existsHere('pubspec.yaml'))   return 'flutter';
-  if (existsHere('composer.json')) {
-    return /laravel\/framework/.test(readSafe(path.join(CWD, 'composer.json'))) ? 'laravel' : 'php';
+  if (existsIn(baseDir, 'go.mod')) return 'go';
+  if (existsIn(baseDir, 'Cargo.toml')) return 'rust';
+  if (existsIn(baseDir, 'pubspec.yaml')) return 'flutter';
+  if (existsIn(baseDir, 'composer.json')) {
+    return /laravel\/framework/.test(readSafe(path.join(baseDir, 'composer.json'))) ? 'laravel' : 'php';
   }
-  if (existsHere('Gemfile'))           return 'ruby';
-  if (existsHere('mix.exs'))           return 'elixir';
-  if (existsHere('build.gradle.kts'))  return 'kotlin-gradle';
-  if (existsHere('build.gradle'))      return 'java-gradle';
-  if (existsHere('pom.xml'))           return 'java-maven';
+  if (existsIn(baseDir, 'Gemfile')) return 'ruby';
+  if (existsIn(baseDir, 'mix.exs')) return 'elixir';
+  if (existsIn(baseDir, 'build.gradle.kts')) return 'kotlin-gradle';
+  if (existsIn(baseDir, 'build.gradle')) return 'java-gradle';
+  if (existsIn(baseDir, 'pom.xml')) return 'java-maven';
   return 'unknown';
+}
+
+function detectProductName(baseDir = CWD) {
+  const files = listDir(baseDir);
+
+  const packageName = readJsonField(path.join(baseDir, 'package.json'), 'name');
+  if (packageName) return packageName;
+
+  const angular = readSafe(path.join(baseDir, 'angular.json'));
+  if (angular) {
+    const match = angular.match(/"projects"\s*:\s*\{\s*"([A-Za-z0-9_-]+)"/);
+    if (match) return match[1];
+  }
+
+  const csproj = files.find((file) => file.endsWith('.csproj'));
+  if (csproj) return path.basename(csproj, '.csproj');
+
+  const pyName = readTomlField(path.join(baseDir, 'pyproject.toml'), 'name');
+  if (pyName) return pyName;
+
+  const cargoName = readTomlField(path.join(baseDir, 'Cargo.toml'), 'name');
+  if (cargoName) return cargoName;
+
+  const pubspecName = readYamlField(path.join(baseDir, 'pubspec.yaml'), 'name');
+  if (pubspecName) return pubspecName;
+
+  const composerName = readJsonField(path.join(baseDir, 'composer.json'), 'name');
+  if (composerName) return composerName.split('/').pop();
+
+  const goMod = readSafe(path.join(baseDir, 'go.mod'));
+  const goMatch = goMod.match(/^module\s+(.+)$/m);
+  if (goMatch) return goMatch[1].trim().split('/').pop();
+
+  return path.basename(baseDir);
+}
+
+function detectProjectMode() {
+  const projectsDir = path.join(CWD, 'projects');
+  if (!fs.existsSync(projectsDir) || !fs.statSync(projectsDir).isDirectory()) return 'root';
+  const projects = fs.readdirSync(projectsDir, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory() && !entry.name.startsWith('.'));
+  return projects.length > 0 ? 'monorepo' : 'root';
+}
+
+function detectProjects() {
+  const projectsDir = path.join(CWD, 'projects');
+  if (!fs.existsSync(projectsDir) || !fs.statSync(projectsDir).isDirectory()) return [];
+  return fs.readdirSync(projectsDir, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory() && !entry.name.startsWith('.'))
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .map((entry) => {
+      const fullPath = path.join(projectsDir, entry.name);
+      return {
+        name: detectProductName(fullPath),
+        path: path.join('projects', entry.name).replace(/\\/g, '/'),
+        stack: detectStack(fullPath),
+      };
+    });
 }
 
 function detectExistingInstructionFiles() {
@@ -351,13 +605,18 @@ function detectExistingInstructionFiles() {
 
 function copyTemplate(existingProtected) {
   const protectedSet = new Set(existingProtected);
-  let copied = 0, skipped = 0, missing = 0;
+  let copied = 0;
+  let skipped = 0;
+  let missing = 0;
 
   for (const rel of TEMPLATE_PATHS) {
     const src = path.join(PACKAGE_ROOT, rel);
     const dest = path.join(CWD, rel);
 
-    if (!fs.existsSync(src)) { missing++; continue; }
+    if (!fs.existsSync(src)) {
+      missing++;
+      continue;
+    }
 
     if (protectedSet.has(rel)) {
       log(`  preserve (user): ${rel}`);
@@ -370,21 +629,23 @@ function copyTemplate(existingProtected) {
       skipped++;
       continue;
     }
+
     if (opts.dryRun) {
       log(`  copy  (dry):    ${rel}`);
       copied++;
       continue;
     }
+
     try {
       fs.cpSync(src, dest, { recursive: true, force: true });
       log(`  copy:           ${rel}`);
       copied++;
-    } catch (e) {
-      err(`  fail  ${rel}: ${e.message}`);
+    } catch (error) {
+      err(`  fail  ${rel}: ${error.message}`);
     }
   }
 
-  log(`\n→ ${copied} copied, ${skipped} skipped${opts.force ? '' : ' (use --force to overwrite starter files)'}, ${missing} missing in package.\n`);
+  log(`\n-> ${copied} copied, ${skipped} skipped${opts.force ? '' : ' (use --force to overwrite starter files)'}, ${missing} missing in package.\n`);
 }
 
 async function handleGitignore(rl) {
@@ -393,75 +654,73 @@ async function handleGitignore(rl) {
     log('==========================================');
     log('  .gitignore');
     log('==========================================');
-    if (existsHere('.gitignore')) {
+    if (existsIn(CWD, '.gitignore')) {
       log('An existing .gitignore was found.');
       log('I can APPEND recommended entries (your existing content is NEVER modified).');
     } else {
       log('No .gitignore found. I can CREATE one with recommended entries.');
     }
-    const resp = await ask(rl, 'Proceed?', 'n');
-    choice = /^[ys]/i.test(resp) ? 'yes' : 'no';
+    const response = await ask(rl, 'Proceed?', 'n');
+    choice = /^[ys]/i.test(response) ? 'yes' : 'no';
     log('');
   }
   choice = choice || 'no';
 
   if (choice !== 'yes') {
-    log('→ .gitignore left untouched.\n');
+    log('-> .gitignore left untouched.\n');
     return;
   }
 
-  const gi = path.join(CWD, '.gitignore');
-  if (fs.existsSync(gi)) {
-    const existing = readSafe(gi);
+  const gitignore = path.join(CWD, '.gitignore');
+  if (fs.existsSync(gitignore)) {
+    const existing = readSafe(gitignore);
     if (existing.includes('Agentic Starter (auto-managed)')) {
-      log('→ Recommended entries already present in .gitignore. Nothing to do.\n');
+      log('-> Recommended entries already present in .gitignore. Nothing to do.\n');
     } else if (opts.dryRun) {
       log('  append (dry):   .gitignore\n');
     } else {
-      fs.appendFileSync(gi, '\n' + RECOMMENDED_IGNORES);
-      log('→ Recommended entries APPENDED to .gitignore (original content preserved).\n');
+      fs.appendFileSync(gitignore, '\n' + RECOMMENDED_IGNORES);
+      log('-> Recommended entries APPENDED to .gitignore (original content preserved).\n');
     }
   } else if (opts.dryRun) {
     log('  create (dry):   .gitignore\n');
   } else {
-    fs.writeFileSync(gi, RECOMMENDED_IGNORES);
-    log('→ .gitignore CREATED.\n');
+    fs.writeFileSync(gitignore, RECOMMENDED_IGNORES);
+    log('-> .gitignore CREATED.\n');
   }
 
-  const ga = path.join(CWD, '.gitattributes');
-  if (!fs.existsSync(ga)) {
+  const gitattributes = path.join(CWD, '.gitattributes');
+  if (!fs.existsSync(gitattributes)) {
     if (opts.dryRun) {
       log('  create (dry):   .gitattributes');
     } else {
-      fs.writeFileSync(ga, GITATTRIBUTES_CONTENT);
-      log('→ .gitattributes CREATED.');
+      fs.writeFileSync(gitattributes, GITATTRIBUTES_CONTENT);
+      log('-> .gitattributes CREATED.');
     }
   } else {
-    log('→ .gitattributes left untouched (already exists).');
+    log('-> .gitattributes left untouched (already exists).');
   }
   log('');
 }
 
-function looksBinary(buf) {
-  const head = buf.length > 8192 ? buf.subarray(0, 8192) : buf;
+function looksBinary(buffer) {
+  const head = buffer.length > 8192 ? buffer.subarray(0, 8192) : buffer;
   return head.includes(0);
 }
 
-function substituteInFile(file, productName, team, domain, stack) {
+function substituteInFile(file, productName, stack) {
   let content;
   try {
-    const buf = fs.readFileSync(file);
-    if (buf.length === 0) return false;
-    if (looksBinary(buf)) return false;
-    content = buf.toString('utf8');
-  } catch { return false; }
+    const buffer = fs.readFileSync(file);
+    if (buffer.length === 0 || looksBinary(buffer)) return false;
+    content = buffer.toString('utf8');
+  } catch {
+    return false;
+  }
 
-  if (!/<PRODUCT_NAME>|<TEAM>|<DOMAIN>|<STACK>/.test(content)) return false;
-
+  if (!/<PRODUCT_NAME>|<STACK>/.test(content)) return false;
   const next = content
     .replace(/<PRODUCT_NAME>/g, productName)
-    .replace(/<TEAM>/g, team)
-    .replace(/<DOMAIN>/g, domain)
     .replace(/<STACK>/g, stack);
 
   if (next === content) return false;
@@ -469,22 +728,26 @@ function substituteInFile(file, productName, team, domain, stack) {
   return true;
 }
 
-function walk(dir, cb) {
+function walk(dir, callback) {
   let entries;
-  try { entries = fs.readdirSync(dir, { withFileTypes: true }); }
-  catch { return; }
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return;
+  }
+
   for (const entry of entries) {
     if (WALK_SKIP_DIRS.has(entry.name)) continue;
     const full = path.join(dir, entry.name);
-    if (entry.isDirectory()) walk(full, cb);
-    else if (entry.isFile()) cb(full);
+    if (entry.isDirectory()) walk(full, callback);
+    else if (entry.isFile()) callback(full);
   }
 }
 
-function substitute(productName, team, domain, stack) {
+function substitute(productName, stack) {
   let touched = 0;
   const stamp = (file) => {
-    if (substituteInFile(file, productName, team, domain, stack)) touched++;
+    if (substituteInFile(file, productName, stack)) touched++;
   };
 
   for (const dir of STARTER_DIRS) {
@@ -495,34 +758,36 @@ function substitute(productName, team, domain, stack) {
     });
   }
 
-  for (const p of STARTER_GITHUB_PATTERNS) {
-    const abs = path.join(CWD, p);
+  for (const rel of STARTER_GITHUB_PATTERNS) {
+    const abs = path.join(CWD, rel);
     if (!fs.existsSync(abs)) continue;
     const stat = fs.statSync(abs);
     if (stat.isDirectory()) walk(abs, stamp);
     else if (stat.isFile()) stamp(abs);
   }
 
-  for (const f of STARTER_ROOT_FILES) {
-    const abs = path.join(CWD, f);
+  for (const rel of STARTER_ROOT_FILES) {
+    const abs = path.join(CWD, rel);
     if (fs.existsSync(abs)) stamp(abs);
   }
 
-  log(`→ ${touched} files updated (only starter-managed paths)${opts.dryRun ? ' (dry-run)' : ''}.\n`);
+  log(`-> ${touched} files updated (only starter-managed paths)${opts.dryRun ? ' (dry-run)' : ''}.\n`);
 }
 
-function writeMeta(productName, team, domain, stack, existingInstructionFiles) {
+function writeMeta(productName, stack, projectMode, projects, existingInstructionFiles) {
   if (opts.skipMeta) return;
   const meta = {
     product_name: productName,
-    team: team,
-    domain: domain,
-    stack: stack,
+    stack,
+    project_mode: projectMode,
+    projects,
     bootstrapped_at: new Date().toISOString(),
     starter_version: PKG.version,
     cli: '@wesleysimplicio/agentic-starter',
     existing_instruction_files: existingInstructionFiles,
-    init_must_ask: ['team', 'domain', 'vision_oneliner', 'primary_personas'],
+    init_must_ask: [],
+    init_must_infer: ['team', 'domain', 'vision_oneliner', 'personas_beyond_dev'],
+    default_persona: 'developer',
     init_must_merge: existingInstructionFiles,
     read_only_globs: [
       '**/*.razor', '**/*.cs', '**/*.csproj', '**/*.sln',
@@ -537,12 +802,12 @@ function writeMeta(productName, team, domain, stack, existingInstructionFiles) {
     return;
   }
   fs.writeFileSync(dest, JSON.stringify(meta, null, 2) + '\n');
-  log('→ .starter-meta.json saved.');
+  log('-> .starter-meta.json saved.');
 }
 
-function ask(rl, q, def) {
-  return new Promise(resolve => {
-    rl.question(`${q} [${def}]: `, ans => resolve((ans || '').trim() || def));
+function ask(rl, question, defaultValue) {
+  return new Promise((resolve) => {
+    rl.question(`${question} [${defaultValue}]: `, (answer) => resolve((answer || '').trim() || defaultValue));
   });
 }
 
@@ -553,15 +818,15 @@ async function chooseCli(rl) {
   log('==========================================');
   log('  Choose the CLI/LLM to run INIT.md');
   log('==========================================\n');
-  CLI_OPTS.forEach((o, i) => {
-    const mark = commandExists(o.cmd) ? '  [installed]' : '';
-    log(`  [${String(i + 1).padStart(2, ' ')}] ${o.label}${mark}`);
+  CLI_OPTS.forEach((option, index) => {
+    const mark = commandExists(option.cmd) ? '  [installed]' : '';
+    log(`  [${String(index + 1).padStart(2, ' ')}] ${option.label}${mark}`);
   });
   log('');
-  const resp = await ask(rl, 'Number', String(CLI_OPTS.length));
-  let idx = parseInt(resp, 10);
-  if (!Number.isFinite(idx) || idx < 1 || idx > CLI_OPTS.length) idx = CLI_OPTS.length;
-  return CLI_OPTS[idx - 1].key;
+  const response = await ask(rl, 'Number', String(CLI_OPTS.length));
+  let index = parseInt(response, 10);
+  if (!Number.isFinite(index) || index < 1 || index > CLI_OPTS.length) index = CLI_OPTS.length;
+  return CLI_OPTS[index - 1].key;
 }
 
 function copyToClipboard(text) {
@@ -572,9 +837,11 @@ function copyToClipboard(text) {
       : [['xclip', ['-selection', 'clipboard']], ['wl-copy', []]];
   for (const [cmd, args] of candidates) {
     try {
-      const r = spawnSync(cmd, args, { input: text, stdio: ['pipe', 'ignore', 'ignore'] });
-      if (r.status === 0) return true;
-    } catch { /* try next */ }
+      const result = spawnSync(cmd, args, { input: text, stdio: ['pipe', 'ignore', 'ignore'] });
+      if (result.status === 0) return true;
+    } catch {
+      // Try the next clipboard command.
+    }
   }
   return false;
 }
@@ -582,8 +849,8 @@ function copyToClipboard(text) {
 function execHandoff(cmd, args) {
   const child = spawn(cmd, args, { stdio: 'inherit' });
   child.on('exit', (code) => process.exit(code ?? 0));
-  child.on('error', (e) => {
-    err(`Failed to launch ${cmd}: ${e.message}`);
+  child.on('error', (error) => {
+    err(`Failed to launch ${cmd}: ${error.message}`);
     process.exit(1);
   });
 }
@@ -608,6 +875,42 @@ function handoff(cliChoice) {
     case 'codex':
       requireCmd('codex', 'https://github.com/openai/codex');
       return execHandoff('codex', ['exec', INIT_PROMPT]);
+    case 'cursor':
+      requireCmd('cursor-agent', 'Cursor 3.0+ required');
+      return execHandoff('cursor-agent', [INIT_PROMPT]);
+    case 'vscode':
+      if (copyToClipboard(INIT_PROMPT)) log('Prompt copied to clipboard.');
+      else log('(clipboard unavailable - copy manually below)');
+      log('');
+      log('VS Code Agent Mode runs in-IDE.');
+      log('1) Open this folder in VS Code.');
+      log('2) Open Chat and switch to Agent mode.');
+      log('3) Paste the prompt below:\n');
+      log(`  ${INIT_PROMPT}\n`);
+      if (commandExists('code')) spawnSync('code', ['.'], { stdio: 'ignore' });
+      return;
+    case 'windsurf':
+      if (copyToClipboard(INIT_PROMPT)) log('Prompt copied to clipboard.');
+      else log('(clipboard unavailable - copy manually below)');
+      log('');
+      log('Windsurf Cascade runs in-IDE.');
+      log('1) Open this folder in Windsurf.');
+      log('2) Open Cascade in Write mode.');
+      log('3) Paste the prompt below:\n');
+      log(`  ${INIT_PROMPT}\n`);
+      if (commandExists('windsurf')) spawnSync('windsurf', ['.'], { stdio: 'ignore' });
+      return;
+    case 'kiro':
+      if (copyToClipboard(INIT_PROMPT)) log('Prompt copied to clipboard.');
+      else log('(clipboard unavailable - copy manually below)');
+      log('');
+      log('Kiro runs in-IDE.');
+      log('1) Open this folder in Kiro.');
+      log('2) Open Chat in Agent mode.');
+      log('3) Paste the prompt below:\n');
+      log(`  ${INIT_PROMPT}\n`);
+      if (commandExists('kiro')) spawnSync('kiro', ['.'], { stdio: 'ignore' });
+      return;
     case 'copilot':
       requireCmd('gh', 'https://cli.github.com');
       if (copyToClipboard(INIT_PROMPT)) log('Prompt copied to clipboard.');
@@ -617,9 +920,6 @@ function handoff(cliChoice) {
       log('Open Copilot Chat (VS Code / IDE) and paste the prompt:\n');
       log(`  ${INIT_PROMPT}\n`);
       return;
-    case 'cursor':
-      requireCmd('cursor-agent', 'Cursor 3.0+ required');
-      return execHandoff('cursor-agent', [INIT_PROMPT]);
     case 'deepseek':
       requireCmd('aider', 'pipx install aider-chat');
       return execHandoff('aider', ['--model', 'deepseek/deepseek-coder', '--message', INIT_PROMPT]);
@@ -646,11 +946,8 @@ function handoff(cliChoice) {
       requireCmd('aider', 'pipx install aider-chat');
       return execHandoff('aider', ['--message', INIT_PROMPT]);
     case 'other':
-      if (copyToClipboard(INIT_PROMPT)) {
-        log('Prompt copied to clipboard. Paste it into your CLI/agent of choice.');
-      } else {
-        log('(clipboard unavailable - copy the prompt below manually)');
-      }
+      if (copyToClipboard(INIT_PROMPT)) log('Prompt copied to clipboard. Paste it into your CLI/agent of choice.');
+      else log('(clipboard unavailable - copy the prompt below manually)');
       log('\nPrompt:');
       log(`  ${INIT_PROMPT}\n`);
       return;
@@ -674,26 +971,28 @@ async function main() {
     process.exit(2);
   }
 
-  const productName = path.basename(CWD);
-  const team        = 'Plataforma';
-  const domain      = 'generico';
-  const stack       = detectStack();
+  const projectMode = detectProjectMode();
+  const projects = detectProjects();
+  const productName = projectMode === 'monorepo' ? path.basename(CWD) : detectProductName();
+  const stack = projectMode === 'monorepo' ? 'monorepo' : detectStack();
 
   log('==========================================');
   log('  Agentic Starter - Bootstrap (npx)');
   log(`  v${PKG.version}`);
   log('==========================================\n');
-  log('Auto-detected (INIT.md will refine TEAM/DOMAIN with you):');
+  log('Auto-detected (agent will infer team/domain/personas/vision from code):');
+  log(`  PROJECT_MODE: ${projectMode}`);
   log(`  PRODUCT_NAME: ${productName}`);
-  log(`  TEAM:         ${team}`);
-  log(`  DOMAIN:       ${domain}`);
   log(`  STACK:        ${stack}`);
+  if (projectMode === 'monorepo') {
+    log(`  PROJECTS:     ${JSON.stringify(projects)}`);
+  }
   log(`  MODE:         ${opts.dryRun ? 'dry-run' : 'write'}${opts.force ? ' (force)' : ''}\n`);
 
   const existingInstructionFiles = detectExistingInstructionFiles();
   if (existingInstructionFiles.length > 0) {
     log('Detected pre-existing instruction files (will be preserved):');
-    for (const f of existingInstructionFiles) log(`  - ${f}`);
+    for (const file of existingInstructionFiles) log(`  - ${file}`);
     log('  -> INIT.md will READ them and IMPROVE in place (essence preserved).\n');
   }
 
@@ -702,19 +1001,23 @@ async function main() {
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
   try {
     await handleGitignore(rl);
-    substitute(productName, team, domain, stack);
-    writeMeta(productName, team, domain, stack, existingInstructionFiles);
+    substitute(productName, stack);
+    writeMeta(productName, stack, projectMode, projects, existingInstructionFiles);
     log('');
 
     const cliChoice = await chooseCli(rl);
     rl.close();
     handoff(cliChoice);
   } finally {
-    try { rl.close(); } catch { /* already closed */ }
+    try {
+      rl.close();
+    } catch {
+      // Already closed.
+    }
   }
 }
 
-main().catch(e => {
-  err('Error:', e && e.stack || e);
+main().catch((error) => {
+  err('Error:', error && error.stack || error);
   process.exit(1);
 });

@@ -6,33 +6,56 @@ end: 2026-05-27
 owner: us4-core
 ---
 
-# Sprint 01 — Foundations & Skeleton (Apple)
+# Sprint 01 - Foundations and Skeleton
 
-## Objetivo
-Bootstrap C++ runtime skeleton, hardware probe (Apple Silicon detection M1..M5+), runtime mode selector (FULL/BALANCED/DEGRADED/ULTRA_LOW/MICRO/MICRO_PLUS), telemetry skeleton, CI/DoD pipeline.
+## Objective
+
+Transition this repository from planning/bootstrap into a real runtime skeleton with a minimal executable CLI contract and the core Apple-specific planning decisions locked down.
+
+## Sprint cut
+
+### Must ship
+
+- runtime skeleton directories and root build contract
+- `us4-cli --version`
+- `us4-cli --probe`
+- hardware probe contract
+- runtime mode selector contract
+- CI transition plan from starter to runtime
+- first runtime-facing E2E smoke definition
+- core ADRs for MLX-first and runtime boundaries
+
+### Can defer
+
+- real inference
+- real correctness diff
+- real release automation
 
 ## Tasks
-- [ ] T01.1 — CMake root + `runtime/{core,adapters,memory,kv,cache,moe,metal,mlx,neon,ane,speculative,tuning,telemetry,benchmarks}` skeleton
-- [ ] T01.2 — `runtime/core/IUS4V6Adapter.h` interface (load, generate, kv ops, mode hooks)
-- [ ] T01.3 — `runtime/core/HardwareProbe` — detect chip (M1..M5+), unified memory size, MLX caps, ANE caps
-- [ ] T01.4 — `runtime/core/RuntimeMode` enum + selector heuristics (RAM tier -> mode)
-- [ ] T01.5 — `runtime/telemetry` skeleton (latency, tokens/s, RAM peak, mode transitions)
-- [ ] T01.6 — `.github/workflows/{ci,dod}.yml` (clang-tidy, GoogleTest, Playwright smoke, coverage gate 80%)
-- [ ] T01.7 — `.claude/hooks/{post-edit,pre-commit}.sh` (lint/format + block red commits)
-- [ ] T01.8 — Playwright config + first smoke (`us4-cli --version` outputs version + chip detected)
-- [ ] T01.9 — ADR-001 Adapter interface contract; ADR-002 Runtime mode definitions
+
+- [ ] T01.1 - Create root runtime scaffold and build contract
+- [ ] T01.2 - Define `us4-cli` contract for `--version` and `--probe`
+- [ ] T01.3 - Define `IUS4V6Adapter` and runtime boundaries
+- [ ] T01.4 - Define `HardwareProbe` and runtime mode selection contract
+- [ ] T01.5 - Define telemetry skeleton and validation maturity gates
+- [ ] T01.6 - Plan CI/DoD transition from starter to runtime
+- [ ] T01.7 - Define first Playwright CLI smoke coverage
+- [ ] T01.8 - Land ADR-001 and ADR-002
 
 ## Test plan
-- Unit (GoogleTest): probe returns valid chip + RAM tier; mode selector picks correct mode per RAM; telemetry records sample.
-- Regression: n/a (first sprint).
-- E2E (Playwright): CLI `--version`, `--probe`, `--mode auto` with trace+screenshot+video.
 
-## DoD
-- Build green on M-series mac.
-- CI gates green, coverage >=80% on `runtime/core`.
-- ADR-001 + ADR-002 merged.
-- Demo: `us4-cli --probe` outputs chip + RAM + recommended mode.
+For Sprint 01, required validation is:
 
-## Riscos
-- Detecao de chip M5+ via `sysctlbyname` pode falhar em macOS antigo -> fallback graceful.
-- MLX headers podem nao estar em todo CI runner -> mock probe quando ausente.
+- planning consistency
+- starter/package checks still green
+- task completeness for current sprint
+- CLI smoke plan defined
+
+Real correctness and regression remain out of scope until runnable inference exists.
+
+## Done criteria
+
+- Sprint 01 tasks all have task files
+- architecture docs match the runtime instead of a generic template
+- product docs and workflow docs agree on the current repo phase
+- no live planning placeholders remain in canonical docs
