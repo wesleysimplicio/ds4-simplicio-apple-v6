@@ -283,10 +283,17 @@ int main() {
   {
     const us4::IUS4V6Adapter *qwen = us4::FindAdapterByModel("QWEN-0.5B");
     const us4::IUS4V6Adapter *llama = us4::FindAdapterByModel("llama-3.1-8b");
+    const us4::IUS4V6Adapter *bitnet =
+        us4::FindAdapterByModel("bitnet-b1.58-2b");
+    const us4::IUS4V6Adapter *ternaryAdapter =
+        us4::FindAdapterByModel("pt-bitnet-ternary-2b");
     const us4::IUS4V6Adapter *ternary =
         us4::FindAdapterByModel("pt-bitnet-ternary-2b");
     ok &= Expect(qwen != nullptr, "registry should find qwen by model");
     ok &= Expect(llama != nullptr, "registry should find llama by model");
+    ok &= Expect(bitnet != nullptr, "registry should find bitnet by model");
+    ok &= Expect(ternaryAdapter != nullptr,
+                 "registry should find ternary adapter by model");
     ok &= Expect(ternary != nullptr,
                  "registry should find ternary by exact model");
     ok &= Expect(ternary != nullptr && ternary->Family() == "ternary",
@@ -323,6 +330,12 @@ int main() {
     ok &= Expect(autoResult.backendReason == "auto-neon" ||
                      autoResult.backendReason == "auto-scalar",
                  "auto generation should expose explicit backend reason");
+    ok &= Expect(result.weightDType == "fp16",
+                 "generation should surface asset weight dtype");
+    ok &= Expect(result.neonKernelFlavor == "fp16-lane8",
+                 "generation should surface neon flavor for fp16 assets");
+    ok &= Expect(result.dequantPath == "none",
+                 "fp16 assets should not request dequant path");
 
     us4::HardwareProbeResult appleProbe = MakeProbe();
     appleProbe.hasMetal = true;
@@ -351,6 +364,39 @@ int main() {
                  "result should surface metal queue label");
     ok &= Expect(qwen->SupportsMetalBackend(),
                  "qwen should declare metal support");
+
+    us4::ModelAsset bitnetAsset;
+    const auto bitnetManifest = RepoRoot() / "tests" / "fixtures" / "models" /
+                                "bitnet-b1.58-2b" / "model.us4manifest";
+    ok &= Expect(us4::LoadModelAsset(bitnetManifest, bitnetAsset, &error),
+                 "bitnet manifest should load");
+    us4::RuntimeContext bitnetContext(MakeProbe());
+    bitnet->ConfigureRuntime(bitnetContext);
+    const us4::GenerationResult bitnetResult = bitnet->Generate(
+        {.prompt = "hi", .maxTokens = 2, .asset = &bitnetAsset}, bitnetContext);
+    ok &= Expect(bitnetResult.weightDType == "int8",
+                 "bitnet generation should surface int8 weight dtype");
+    ok &= Expect(bitnetResult.dequantPath == "groupwise-int8",
+                 "bitnet generation should surface int8 dequant path");
+    ok &= Expect(bitnetResult.neonKernelFlavor == "int8-dot",
+                 "bitnet generation should surface int8 dot neon flavor");
+
+    us4::ModelAsset ternaryAsset;
+    const auto ternaryManifest = RepoRoot() / "tests" / "fixtures" / "models" /
+                                 "pt-bitnet-ternary-2b" / "model.us4manifest";
+    ok &= Expect(us4::LoadModelAsset(ternaryManifest, ternaryAsset, &error),
+                 "ternary manifest should load");
+    us4::RuntimeContext ternaryContext(MakeProbe());
+    ternaryAdapter->ConfigureRuntime(ternaryContext);
+    const us4::GenerationResult ternaryResult = ternaryAdapter->Generate(
+        {.prompt = "hi", .maxTokens = 2, .asset = &ternaryAsset},
+        ternaryContext);
+    ok &= Expect(ternaryResult.weightDType == "int4",
+                 "ternary generation should surface int4 weight dtype");
+    ok &= Expect(ternaryResult.dequantPath == "groupwise-int4",
+                 "ternary generation should surface int4 dequant path");
+    ok &= Expect(ternaryResult.neonKernelFlavor == "scalar-bridge",
+                 "ternary generation should surface scalar-bridge neon flavor");
   }
 
   {

@@ -23,7 +23,7 @@ enum class ArchitectureType {
 struct GenerationRequest {
   std::string prompt;
   std::size_t maxTokens = 16;
-  const ModelAsset* asset = nullptr;
+  const ModelAsset *asset = nullptr;
   std::optional<BackendType> requestedBackend = std::nullopt;
 };
 
@@ -42,6 +42,9 @@ struct GenerationResult {
   std::size_t mlxOperationCount = 0;
   bool mlxPlanBuilt = false;
   bool mlxEvaluated = false;
+  std::string weightDType;
+  std::string neonKernelFlavor;
+  std::string dequantPath;
   std::string metalDevice;
   std::string metalQueueLabel;
   RuntimeMode mode = RuntimeMode::kNano;
@@ -49,7 +52,7 @@ struct GenerationResult {
 };
 
 class IUS4V6Adapter {
- public:
+public:
   virtual ~IUS4V6Adapter() = default;
 
   virtual std::string_view Family() const = 0;
@@ -64,10 +67,12 @@ class IUS4V6Adapter {
   virtual bool SupportsPromptRun() const = 0;
 
   virtual RuntimeMode MinimumMode() const = 0;
-  virtual RuntimeMode RecommendedMode(const HardwareProbeResult& hardware) const = 0;
-  virtual void ConfigureRuntime(RuntimeContext& context) const = 0;
+  virtual RuntimeMode
+  RecommendedMode(const HardwareProbeResult &hardware) const = 0;
+  virtual void ConfigureRuntime(RuntimeContext &context) const = 0;
   virtual std::vector<std::string> Tokenize(std::string_view text) const = 0;
-  virtual GenerationResult Generate(const GenerationRequest& request, const RuntimeContext& context) const = 0;
+  virtual GenerationResult Generate(const GenerationRequest &request,
+                                    const RuntimeContext &context) const = 0;
 };
 
-}  // namespace us4
+} // namespace us4

@@ -178,6 +178,9 @@ void PrintRunText(const us4::GenerationResult &result) {
             << "\n"
             << "mlx_evaluated: " << (result.mlxEvaluated ? "true" : "false")
             << "\n"
+            << "weight_dtype: " << result.weightDType << "\n"
+            << "neon_kernel_flavor: " << result.neonKernelFlavor << "\n"
+            << "dequant_path: " << result.dequantPath << "\n"
             << "metal_device: " << result.metalDevice << "\n"
             << "metal_queue_label: " << result.metalQueueLabel << "\n"
             << "prompt_tokens: " << result.promptTokens.size() << "\n"
@@ -221,6 +224,10 @@ void PrintRunJson(const us4::GenerationResult &result) {
             << ","
             << "\"mlx_evaluated\":" << (result.mlxEvaluated ? "true" : "false")
             << ","
+            << "\"weight_dtype\":\"" << EscapeJson(result.weightDType) << "\","
+            << "\"neon_kernel_flavor\":\""
+            << EscapeJson(result.neonKernelFlavor) << "\","
+            << "\"dequant_path\":\"" << EscapeJson(result.dequantPath) << "\","
             << "\"metal_device\":\"" << EscapeJson(result.metalDevice) << "\","
             << "\"metal_queue_label\":\"" << EscapeJson(result.metalQueueLabel)
             << "\","
