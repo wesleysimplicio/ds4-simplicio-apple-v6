@@ -16,39 +16,46 @@ std::string Normalize(const std::string_view value) {
     if (ch == '-' || ch == ' ') {
       normalized.push_back('_');
     } else {
-      normalized.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(ch))));
+      normalized.push_back(
+          static_cast<char>(std::tolower(static_cast<unsigned char>(ch))));
     }
   }
   return normalized;
 }
 
-bool SupportsBackend(const HardwareProbeResult& hardware,
-                     const RuntimeMode mode,
-                     const IUS4V6Adapter& adapter,
+bool SupportsBackend(const HardwareProbeResult &hardware,
+                     const RuntimeMode mode, const IUS4V6Adapter &adapter,
                      const BackendType backend) {
   switch (backend) {
-    case BackendType::kScalarCpu:
-      return true;
-    case BackendType::kNeon:
-      return hardware.hasNeon &&
-             (mode == RuntimeMode::kDegraded || mode == RuntimeMode::kUltraLow || mode == RuntimeMode::kMicro ||
-              mode == RuntimeMode::kMicroPlus || mode == RuntimeMode::kNano);
-    case BackendType::kMlx:
-      return hardware.hasMlx && adapter.SupportsMlxBackend() &&
-             (mode == RuntimeMode::kFull || mode == RuntimeMode::kBalancedPlus || mode == RuntimeMode::kDegraded ||
-              mode == RuntimeMode::kUltraLow);
-    case BackendType::kMetal:
-      return hardware.hasMetal && adapter.SupportsMetalBackend() &&
-             (mode == RuntimeMode::kFull || mode == RuntimeMode::kBalancedPlus);
-    case BackendType::kAne:
-      return hardware.hasAne && adapter.SupportsAneBackend() && mode == RuntimeMode::kFull;
+  case BackendType::kScalarCpu:
+    return true;
+  case BackendType::kNeon:
+    if (!hardware.hasNeon || hardware.neonVectorBits < 128U) {
+      return false;
+    }
+    if (mode == RuntimeMode::kDegraded || mode == RuntimeMode::kUltraLow) {
+      return hardware.hasPerformanceCores;
+    }
+    return (mode == RuntimeMode::kMicro || mode == RuntimeMode::kMicroPlus ||
+            mode == RuntimeMode::kNano) &&
+           (hardware.hasPerformanceCores || hardware.hasEfficiencyCores);
+  case BackendType::kMlx:
+    return hardware.hasMlx && adapter.SupportsMlxBackend() &&
+           (mode == RuntimeMode::kFull || mode == RuntimeMode::kBalancedPlus ||
+            mode == RuntimeMode::kDegraded || mode == RuntimeMode::kUltraLow);
+  case BackendType::kMetal:
+    return hardware.hasMetal && adapter.SupportsMetalBackend() &&
+           (mode == RuntimeMode::kFull || mode == RuntimeMode::kBalancedPlus);
+  case BackendType::kAne:
+    return hardware.hasAne && adapter.SupportsAneBackend() &&
+           mode == RuntimeMode::kFull;
   }
   return false;
 }
 
-BackendType PreferredBackend(const HardwareProbeResult& hardware,
+BackendType PreferredBackend(const HardwareProbeResult &hardware,
                              const RuntimeMode mode,
-                             const IUS4V6Adapter& adapter) {
+                             const IUS4V6Adapter &adapter) {
   if (SupportsBackend(hardware, mode, adapter, BackendType::kMetal)) {
     return BackendType::kMetal;
   }
@@ -63,34 +70,34 @@ BackendType PreferredBackend(const HardwareProbeResult& hardware,
 
 std::string_view AutoReasonFor(const BackendType backend) {
   switch (backend) {
-    case BackendType::kMetal:
-      return "auto-metal";
-    case BackendType::kMlx:
-      return "auto-mlx";
-    case BackendType::kNeon:
-      return "auto-neon";
-    case BackendType::kScalarCpu:
-      return "auto-scalar";
-    case BackendType::kAne:
-      return "auto-ane";
+  case BackendType::kMetal:
+    return "auto-metal";
+  case BackendType::kMlx:
+    return "auto-mlx";
+  case BackendType::kNeon:
+    return "auto-neon";
+  case BackendType::kScalarCpu:
+    return "auto-scalar";
+  case BackendType::kAne:
+    return "auto-ane";
   }
   return "auto-scalar";
 }
 
-}  // namespace
+} // namespace
 
 std::string_view ToString(const BackendType backend) {
   switch (backend) {
-    case BackendType::kScalarCpu:
-      return "scalar";
-    case BackendType::kNeon:
-      return "neon";
-    case BackendType::kMlx:
-      return "mlx";
-    case BackendType::kMetal:
-      return "metal";
-    case BackendType::kAne:
-      return "ane";
+  case BackendType::kScalarCpu:
+    return "scalar";
+  case BackendType::kNeon:
+    return "neon";
+  case BackendType::kMlx:
+    return "mlx";
+  case BackendType::kMetal:
+    return "metal";
+  case BackendType::kAne:
+    return "ane";
   }
   return "scalar";
 }
@@ -115,9 +122,9 @@ std::optional<BackendType> ParseBackendType(const std::string_view value) {
   return std::nullopt;
 }
 
-BackendSelection SelectBackend(const HardwareProbeResult& hardware,
+BackendSelection SelectBackend(const HardwareProbeResult &hardware,
                                const RuntimeMode mode,
-                               const IUS4V6Adapter& adapter,
+                               const IUS4V6Adapter &adapter,
                                const std::optional<BackendType> requested) {
   BackendSelection selection;
   if (requested.has_value()) {
@@ -137,4 +144,4 @@ BackendSelection SelectBackend(const HardwareProbeResult& hardware,
   return selection;
 }
 
-}  // namespace us4
+} // namespace us4

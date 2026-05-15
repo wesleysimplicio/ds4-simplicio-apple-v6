@@ -1,6 +1,7 @@
 #include "core/hardware_probe.h"
 
 #include <cstdlib>
+#include <string_view>
 
 #if defined(__APPLE__)
 #include <sys/sysctl.h>
@@ -10,15 +11,33 @@ namespace us4 {
 
 namespace {
 
+bool ReadBoolEnv(const char *name, const bool fallback) {
+  const char *value = std::getenv(name);
+  if (value == nullptr) {
+    return fallback;
+  }
+  return std::string_view(value) == "1" || std::string_view(value) == "true" ||
+         std::string_view(value) == "TRUE";
+}
+
+unsigned int ReadUnsignedEnv(const char *name, const unsigned int fallback) {
+  const char *value = std::getenv(name);
+  if (value == nullptr) {
+    return fallback;
+  }
+  return static_cast<unsigned int>(std::strtoul(value, nullptr, 10));
+}
+
 unsigned long long DetectMemoryGiB() {
 #if defined(__APPLE__)
   std::uint64_t memory_bytes = 0;
   size_t size = sizeof(memory_bytes);
-  if (sysctlbyname("hw.memsize", &memory_bytes, &size, nullptr, 0) == 0 && memory_bytes > 0) {
+  if (sysctlbyname("hw.memsize", &memory_bytes, &size, nullptr, 0) == 0 &&
+      memory_bytes > 0) {
     return memory_bytes / (1024ULL * 1024ULL * 1024ULL);
   }
 #endif
-  const char* from_env = std::getenv("US4_MEMORY_GIB");
+  const char *from_env = std::getenv("US4_MEMORY_GIB");
   if (from_env != nullptr) {
     return std::strtoull(from_env, nullptr, 10);
   }
@@ -51,7 +70,9 @@ std::string DetectChip(bool is_apple_silicon) {
 #if defined(__APPLE__) && defined(__aarch64__)
   char buffer[256] = {};
   size_t size = sizeof(buffer);
-  if (sysctlbyname("machdep.cpu.brand_string", &buffer, &size, nullptr, 0) == 0 && buffer[0] != '\0') {
+  if (sysctlbyname("machdep.cpu.brand_string", &buffer, &size, nullptr, 0) ==
+          0 &&
+      buffer[0] != '\0') {
     return std::string(buffer);
   }
   return "apple-silicon";
@@ -63,21 +84,29 @@ std::string DetectChip(bool is_apple_silicon) {
 #endif
 }
 
-}  // namespace
+} // namespace
 
 HardwareProbeResult HardwareProbe::Detect() {
   HardwareProbeResult result;
   result.platform = DetectPlatform();
   result.architecture = DetectArchitecture();
-  result.isAppleSilicon = (result.platform == "apple" && result.architecture == "arm64");
+  result.isAppleSilicon =
+      (result.platform == "apple" && result.architecture == "arm64");
   result.unifiedMemoryGiB = DetectMemoryGiB();
   result.hasMlx = result.isAppleSilicon;
   result.hasMetal = result.isAppleSilicon;
   result.hasNeon = (result.architecture == "arm64");
   result.hasAne = false;
+  result.neonVectorBits =
+      ReadUnsignedEnv("US4_NEON_VECTOR_BITS", result.hasNeon ? 128U : 0U);
+  result.hasPerformanceCores =
+      ReadBoolEnv("US4_HAS_PERFORMANCE_CORES", result.isAppleSilicon);
+  result.hasEfficiencyCores =
+      ReadBoolEnv("US4_HAS_EFFICIENCY_CORES", result.isAppleSilicon);
   result.chip = DetectChip(result.isAppleSilicon);
-  result.recommendedMode = SelectRuntimeModeFromMemoryGiB(result.unifiedMemoryGiB);
+  result.recommendedMode =
+      SelectRuntimeModeFromMemoryGiB(result.unifiedMemoryGiB);
   return result;
 }
 
-}  // namespace us4
+} // namespace us4

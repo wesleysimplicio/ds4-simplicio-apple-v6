@@ -90,6 +90,11 @@ void PrintProbeText(const us4::HardwareProbeResult &probe) {
             << "has_metal: " << (probe.hasMetal ? "true" : "false") << "\n"
             << "has_neon: " << (probe.hasNeon ? "true" : "false") << "\n"
             << "has_ane: " << (probe.hasAne ? "true" : "false") << "\n"
+            << "neon_vector_bits: " << probe.neonVectorBits << "\n"
+            << "has_performance_cores: "
+            << (probe.hasPerformanceCores ? "true" : "false") << "\n"
+            << "has_efficiency_cores: "
+            << (probe.hasEfficiencyCores ? "true" : "false") << "\n"
             << "metal_device: " << metalDevice.deviceName << "\n"
             << "metal_queue_label: " << metalDevice.queueLabel << "\n"
             << "metal_threads_per_group: "
@@ -126,6 +131,11 @@ void PrintProbeJson(const us4::HardwareProbeResult &probe) {
             << "\"has_metal\":" << (probe.hasMetal ? "true" : "false") << ","
             << "\"has_neon\":" << (probe.hasNeon ? "true" : "false") << ","
             << "\"has_ane\":" << (probe.hasAne ? "true" : "false") << ","
+            << "\"neon_vector_bits\":" << probe.neonVectorBits << ","
+            << "\"has_performance_cores\":"
+            << (probe.hasPerformanceCores ? "true" : "false") << ","
+            << "\"has_efficiency_cores\":"
+            << (probe.hasEfficiencyCores ? "true" : "false") << ","
             << "\"metal_device\":\"" << EscapeJson(metalDevice.deviceName)
             << "\","
             << "\"metal_queue_label\":\"" << EscapeJson(metalDevice.queueLabel)

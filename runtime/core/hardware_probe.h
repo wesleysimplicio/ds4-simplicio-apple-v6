@@ -16,12 +16,15 @@ struct HardwareProbeResult {
   bool hasMetal = false;
   bool hasNeon = false;
   bool hasAne = false;
+  unsigned int neonVectorBits = 0;
+  bool hasPerformanceCores = false;
+  bool hasEfficiencyCores = false;
   RuntimeMode recommendedMode = RuntimeMode::kNano;
 };
 
 class HardwareProbe {
- public:
+public:
   static HardwareProbeResult Detect();
 };
 
-}  // namespace us4
+} // namespace us4

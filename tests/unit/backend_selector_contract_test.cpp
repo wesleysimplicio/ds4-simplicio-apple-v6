@@ -16,7 +16,7 @@ us4::HardwareProbeResult MakeProbe() {
   return probe;
 }
 
-}  // namespace
+} // namespace
 
 TEST(BackendSelectorContractTest, ParsesRequestedBackendAliases) {
   EXPECT_EQ(us4::ParseBackendType("CPU"), us4::BackendType::kScalarCpu);
@@ -27,11 +27,15 @@ TEST(BackendSelectorContractTest, ParsesRequestedBackendAliases) {
   EXPECT_FALSE(us4::ParseBackendType("cuda").has_value());
 }
 
-TEST(BackendSelectorContractTest, AutoSelectionPrefersMetalBeforeOtherBackends) {
+TEST(BackendSelectorContractTest,
+     AutoSelectionPrefersMetalBeforeOtherBackends) {
   us4::HardwareProbeResult probe = MakeProbe();
   probe.hasMetal = true;
   probe.hasMlx = true;
   probe.hasNeon = true;
+  probe.neonVectorBits = 128;
+  probe.hasPerformanceCores = true;
+  probe.hasEfficiencyCores = true;
 
   const us4::LlamaAdapter adapter;
   const us4::BackendSelection selection =
@@ -42,11 +46,15 @@ TEST(BackendSelectorContractTest, AutoSelectionPrefersMetalBeforeOtherBackends) 
   EXPECT_EQ(selection.reason, "auto-metal");
 }
 
-TEST(BackendSelectorContractTest, AutoSelectionPrefersMlxWhenMetalModeIsDisallowed) {
+TEST(BackendSelectorContractTest,
+     AutoSelectionPrefersMlxWhenMetalModeIsDisallowed) {
   us4::HardwareProbeResult probe = MakeProbe();
   probe.hasMetal = true;
   probe.hasMlx = true;
   probe.hasNeon = true;
+  probe.neonVectorBits = 128;
+  probe.hasPerformanceCores = true;
+  probe.hasEfficiencyCores = true;
 
   const us4::LlamaAdapter adapter;
   const us4::BackendSelection selection =
@@ -57,10 +65,13 @@ TEST(BackendSelectorContractTest, AutoSelectionPrefersMlxWhenMetalModeIsDisallow
   EXPECT_EQ(selection.reason, "auto-mlx");
 }
 
-TEST(BackendSelectorContractTest, AutoSelectionFallsToNeonForLowModesWithoutMlx) {
+TEST(BackendSelectorContractTest,
+     AutoSelectionFallsToNeonForLowModesWithoutMlx) {
   us4::HardwareProbeResult probe = MakeProbe();
   probe.hasMetal = true;
   probe.hasNeon = true;
+  probe.neonVectorBits = 128;
+  probe.hasEfficiencyCores = true;
 
   const us4::QwenAdapter adapter;
   const us4::BackendSelection selection =
@@ -71,13 +82,16 @@ TEST(BackendSelectorContractTest, AutoSelectionFallsToNeonForLowModesWithoutMlx)
   EXPECT_EQ(selection.reason, "auto-neon");
 }
 
-TEST(BackendSelectorContractTest, RequestedUnavailableBackendFallsBackToPreferredBackend) {
+TEST(BackendSelectorContractTest,
+     RequestedUnavailableBackendFallsBackToPreferredBackend) {
   us4::HardwareProbeResult probe = MakeProbe();
   probe.hasNeon = true;
+  probe.neonVectorBits = 128;
+  probe.hasPerformanceCores = true;
 
   const us4::QwenAdapter adapter;
-  const us4::BackendSelection selection =
-      us4::SelectBackend(probe, us4::RuntimeMode::kDegraded, adapter, us4::BackendType::kMetal);
+  const us4::BackendSelection selection = us4::SelectBackend(
+      probe, us4::RuntimeMode::kDegraded, adapter, us4::BackendType::kMetal);
 
   EXPECT_EQ(selection.selected, us4::BackendType::kNeon);
   EXPECT_TRUE(selection.fellBack);
@@ -88,12 +102,36 @@ TEST(BackendSelectorContractTest, RequestedMlxFallsBackWhenModeDisallowsIt) {
   us4::HardwareProbeResult probe = MakeProbe();
   probe.hasMlx = true;
   probe.hasNeon = true;
+  probe.neonVectorBits = 128;
+  probe.hasEfficiencyCores = true;
 
   const us4::LlamaAdapter adapter;
-  const us4::BackendSelection selection =
-      us4::SelectBackend(probe, us4::RuntimeMode::kMicro, adapter, us4::BackendType::kMlx);
+  const us4::BackendSelection selection = us4::SelectBackend(
+      probe, us4::RuntimeMode::kMicro, adapter, us4::BackendType::kMlx);
 
   EXPECT_EQ(selection.selected, us4::BackendType::kNeon);
   EXPECT_TRUE(selection.fellBack);
   EXPECT_EQ(selection.reason, "requested-backend-unavailable");
+}
+
+TEST(BackendSelectorContractTest,
+     NeonRequiresVectorWidthAndEligibleCpuCluster) {
+  us4::HardwareProbeResult probe = MakeProbe();
+  probe.hasNeon = true;
+  probe.neonVectorBits = 64;
+  probe.hasPerformanceCores = true;
+
+  const us4::QwenAdapter adapter;
+  const us4::BackendSelection narrowSelection =
+      us4::SelectBackend(probe, us4::RuntimeMode::kMicroPlus, adapter);
+  EXPECT_EQ(narrowSelection.selected, us4::BackendType::kScalarCpu);
+  EXPECT_EQ(narrowSelection.reason, "auto-scalar");
+
+  probe.neonVectorBits = 128;
+  probe.hasPerformanceCores = false;
+  probe.hasEfficiencyCores = true;
+  const us4::BackendSelection degradedSelection =
+      us4::SelectBackend(probe, us4::RuntimeMode::kDegraded, adapter);
+  EXPECT_EQ(degradedSelection.selected, us4::BackendType::kScalarCpu);
+  EXPECT_EQ(degradedSelection.reason, "auto-scalar");
 }

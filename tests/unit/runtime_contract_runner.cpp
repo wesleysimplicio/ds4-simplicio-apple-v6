@@ -48,6 +48,9 @@ us4::HardwareProbeResult MakeProbe() {
   probe.unifiedMemoryGiB = 24;
   probe.isAppleSilicon = true;
   probe.hasNeon = true;
+  probe.neonVectorBits = 128;
+  probe.hasPerformanceCores = true;
+  probe.hasEfficiencyCores = true;
   probe.recommendedMode = us4::RuntimeMode::kDegraded;
   return probe;
 }
@@ -113,6 +116,9 @@ int main() {
     probe.hasMetal = true;
     probe.hasMlx = true;
     probe.hasNeon = true;
+    probe.neonVectorBits = 128;
+    probe.hasPerformanceCores = true;
+    probe.hasEfficiencyCores = true;
     const us4::LlamaAdapter llama;
     const us4::BackendSelection autoSelection =
         us4::SelectBackend(probe, us4::RuntimeMode::kBalancedPlus, llama);
@@ -350,6 +356,9 @@ int main() {
   {
     us4::HardwareProbeResult neonProbe = MakeProbe();
     neonProbe.hasNeon = true;
+    neonProbe.neonVectorBits = 128;
+    neonProbe.hasPerformanceCores = true;
+    neonProbe.hasEfficiencyCores = true;
 
     const us4::Tensor fp16Lhs({8, 16}, us4::DType::kFloat16,
                               us4::DeviceType::kCpu);
@@ -376,6 +385,14 @@ int main() {
     ok &=
         Expect(attentionProfile.headDimBlock == 32U,
                "neon attention should keep 32-wide head blocks when possible");
+
+    us4::HardwareProbeResult narrowNeonProbe = neonProbe;
+    narrowNeonProbe.neonVectorBits = 64;
+    const us4::QwenAdapter qwenAdapter;
+    const us4::BackendSelection narrowSelection = us4::SelectBackend(
+        narrowNeonProbe, us4::RuntimeMode::kMicroPlus, qwenAdapter);
+    ok &= Expect(narrowSelection.selected == us4::BackendType::kScalarCpu,
+                 "narrow neon vectors should fall back to scalar");
 
     us4::Tensor int8Weights({4}, us4::DType::kInt8, us4::DeviceType::kCpu);
     us4::Tensor int8Output({4}, us4::DType::kFloat32, us4::DeviceType::kCpu);

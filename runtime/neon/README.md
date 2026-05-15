@@ -12,6 +12,8 @@ What already exists:
   group-wise dequant contracts used by low-bit NEON planning
 - the NEON profile layer already locks tile expectations such as `8x8`,
   `4x16`, dot-product usage, and fused softmax-rescale intent
+- the backend selector now also checks `neon_vector_bits` and CPU cluster
+  eligibility before it chooses NEON automatically
 
 What is still missing:
 
