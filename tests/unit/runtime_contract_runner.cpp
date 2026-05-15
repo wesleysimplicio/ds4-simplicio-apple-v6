@@ -1,3 +1,4 @@
+#include <cmath>
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
@@ -5,6 +6,7 @@
 #include <optional>
 #include <set>
 #include <string_view>
+#include <vector>
 
 #include "adapters/adapter_registry.h"
 #include "adapters/llama/llama_adapter.h"
@@ -12,6 +14,8 @@
 #include "core/backend_selector.h"
 #include "core/model_asset.h"
 #include "core/runtime_context.h"
+#include "cpu/scalar_attention.h"
+#include "cpu/scalar_matmul.h"
 #include "kv/kv_pager.h"
 #include "kv/prefix_cache.h"
 #include "kv/summarizer.h"
@@ -28,6 +32,8 @@
 #include "neon/dequant_int4.h"
 #include "neon/dequant_int8.h"
 #include "neon/kernel_profile.h"
+#include "neon/neon_attention.h"
+#include "neon/neon_matmul.h"
 #include "sprint_01_contract_placeholders.h"
 
 namespace {
@@ -64,6 +70,36 @@ std::filesystem::path RepoRoot() {
       .parent_path()
       .parent_path();
 #endif
+}
+
+void FillHalfTensor(us4::Tensor &tensor, const std::vector<float> &values,
+                    const bool bfloat16) {
+  std::uint16_t *data = tensor.MutableDataAsUInt16();
+  if (data == nullptr || values.size() != tensor.ElementCount()) {
+    return;
+  }
+  for (std::size_t index = 0; index < values.size(); ++index) {
+    data[index] = bfloat16 ? us4::EncodeBFloat16(values[index])
+                           : us4::EncodeFloat16(values[index]);
+  }
+}
+
+float QuantizeHalfValue(const float value, const bool bfloat16) {
+  return bfloat16 ? us4::DecodeBFloat16(us4::EncodeBFloat16(value))
+                  : us4::DecodeFloat16(us4::EncodeFloat16(value));
+}
+
+bool FillHalfReferenceTensor(us4::Tensor &tensor,
+                             const std::vector<float> &values,
+                             const bool bfloat16) {
+  float *data = tensor.MutableDataAsFloat32();
+  if (data == nullptr || values.size() != tensor.ElementCount()) {
+    return false;
+  }
+  for (std::size_t index = 0; index < values.size(); ++index) {
+    data[index] = QuantizeHalfValue(values[index], bfloat16);
+  }
+  return true;
 }
 
 } // namespace
@@ -252,13 +288,22 @@ int main() {
     pager.Append("prompt-b", {3.0F, 4.0F});
     const auto page = pager.Lookup("prompt-a");
     ok &= Expect(page.has_value(), "kv pager should find stored page");
+    ok &= Expect(page->keys.size() == 2U,
+                 "kv pager should preserve key rows for cached pages");
     ok &= Expect(page->hitCount >= 1U,
                  "kv pager lookup should increase hit count");
+    ok &= Expect(pager.WarmPageCount() == 1U,
+                 "kv pager should demote excess hot pages into warm tier");
 
     us4::Summarizer summarizer;
     const auto summary = summarizer.Summarize({2.0F, 4.0F, 6.0F});
     ok &= Expect(summary.size() == 1U && summary[0] == 4.0F,
                  "summarizer should produce arithmetic mean");
+    const auto rowSummary =
+        summarizer.SummarizeRows({1.0F, 3.0F, 5.0F, 7.0F, 9.0F, 11.0F}, 3U);
+    ok &= Expect(rowSummary.size() == 3U && rowSummary[0] == 4.0F &&
+                     rowSummary[1] == 6.0F && rowSummary[2] == 8.0F,
+                 "summarizer should compress rows per hidden column");
   }
 
   {
@@ -324,18 +369,54 @@ int main() {
                  "scalar fallback should not record metal dispatches");
     ok &= Expect(result.mlxOperationCount == 0U,
                  "scalar fallback should not record mlx operations");
+    ok &= Expect(!result.kvCacheHit,
+                 "first generation should populate kv cache on demand");
+    ok &= Expect(result.kvPageCount == 1U,
+                 "first generation should publish a single prompt kv page");
+    ok &= Expect(result.kvHotPages == 1U && result.kvWarmPages == 0U &&
+                     result.kvColdPages == 0U,
+                 "single prompt cache should stay hot");
+    ok &= Expect(result.prefixCacheEntries == 1U,
+                 "generation should retain a prefix cache entry");
 
     const us4::GenerationResult autoResult = qwen->Generate(
         {.prompt = "Hi, US4!", .maxTokens = 4, .asset = &asset}, context);
     ok &= Expect(autoResult.backendReason == "auto-neon" ||
                      autoResult.backendReason == "auto-scalar",
                  "auto generation should expose explicit backend reason");
+    ok &= Expect(autoResult.kvCacheHit,
+                 "repeated generation should reuse prompt kv cache");
+    ok &= Expect(!autoResult.kvRestoredFromColdStore,
+                 "shared runtime context should hit hot kv before cold store");
     ok &= Expect(result.weightDType == "fp16",
                  "generation should surface asset weight dtype");
     ok &= Expect(result.neonKernelFlavor == "fp16-lane8",
                  "generation should surface neon flavor for fp16 assets");
     ok &= Expect(result.dequantPath == "none",
                  "fp16 assets should not request dequant path");
+
+    std::filesystem::remove_all(RepoRoot() / "build" / "kv-cold-store");
+    us4::RuntimeContext lowMemoryContext(MakeProbe());
+    lowMemoryContext.SetMode(us4::RuntimeMode::kMicro);
+    const us4::GenerationResult summarizedResult =
+        qwen->Generate({.prompt = "one two three four five six seven",
+                        .maxTokens = 2,
+                        .asset = &asset},
+                       lowMemoryContext);
+    ok &= Expect(summarizedResult.kvSummaryRows > 0U,
+                 "micro mode should summarize old kv rows");
+
+    us4::RuntimeContext restoredContext(MakeProbe());
+    restoredContext.SetMode(us4::RuntimeMode::kMicro);
+    const us4::GenerationResult restoredResult =
+        qwen->Generate({.prompt = "one two three four five six seven",
+                        .maxTokens = 2,
+                        .asset = &asset},
+                       restoredContext);
+    ok &= Expect(restoredResult.kvCacheHit,
+                 "second low-memory pass should reuse kv state");
+    ok &= Expect(restoredResult.kvRestoredFromColdStore,
+                 "fresh low-memory context should restore kv from cold store");
 
     us4::HardwareProbeResult appleProbe = MakeProbe();
     appleProbe.hasMetal = true;
@@ -416,6 +497,17 @@ int main() {
                  "neon matmul should pick fp16 lane8 profile on arm64");
     ok &= Expect(matmulProfile.tileRows == 8U && matmulProfile.tileCols == 8U,
                  "neon matmul should keep 8x8 tile contract");
+    const us4::Tensor bf16Lhs({8, 16}, us4::DType::kBFloat16,
+                              us4::DeviceType::kCpu);
+    const us4::Tensor bf16Rhs({16, 24}, us4::DType::kBFloat16,
+                              us4::DeviceType::kCpu);
+    const us4::NeonMatmulProfile bf16MatmulProfile =
+        us4::PlanNeonMatmul(neonProbe, bf16Lhs, bf16Rhs);
+    ok &= Expect(bf16MatmulProfile.flavor == us4::NeonKernelFlavor::kBf16Lane8,
+                 "neon matmul should pick bf16 lane8 profile on arm64");
+    ok &= Expect(bf16MatmulProfile.tileRows == 8U &&
+                     bf16MatmulProfile.tileCols == 8U,
+                 "neon matmul should keep 8x8 tile contract for bf16");
 
     const us4::Tensor query({1, 8, 64}, us4::DType::kFloat32,
                             us4::DeviceType::kCpu);
@@ -432,6 +524,203 @@ int main() {
         Expect(attentionProfile.headDimBlock == 32U,
                "neon attention should keep 32-wide head blocks when possible");
 
+    us4::Tensor attentionQuery({2, 4}, us4::DType::kFloat32,
+                               us4::DeviceType::kCpu);
+    us4::Tensor attentionKey({3, 4}, us4::DType::kFloat32,
+                             us4::DeviceType::kCpu);
+    us4::Tensor attentionValue({3, 3}, us4::DType::kFloat32,
+                               us4::DeviceType::kCpu);
+    us4::Tensor neonAttentionOut({2, 3}, us4::DType::kFloat32,
+                                 us4::DeviceType::kCpu);
+    us4::Tensor scalarAttentionOut({2, 3}, us4::DType::kFloat32,
+                                   us4::DeviceType::kCpu);
+    float *attentionQueryData = attentionQuery.MutableDataAsFloat32();
+    float *attentionKeyData = attentionKey.MutableDataAsFloat32();
+    float *attentionValueData = attentionValue.MutableDataAsFloat32();
+    for (std::size_t index = 0; index < 8U; ++index) {
+      attentionQueryData[index] =
+          (static_cast<float>((index % 7U) + 1U) * 0.25F) - 0.5F;
+    }
+    for (std::size_t index = 0; index < 12U; ++index) {
+      attentionKeyData[index] =
+          (static_cast<float>((index % 7U) + 1U) * 0.20F) - 0.25F;
+    }
+    for (std::size_t index = 0; index < 9U; ++index) {
+      attentionValueData[index] =
+          (static_cast<float>((index % 7U) + 1U) * 0.15F) + 0.10F;
+    }
+    ok &=
+        Expect(us4::NeonAttention(attentionQuery, attentionKey, attentionValue,
+                                  neonAttentionOut, false, {}, nullptr),
+               "neon attention should execute fp32 path");
+    ok &= Expect(us4::ScalarAttention(attentionQuery, attentionKey,
+                                      attentionValue, scalarAttentionOut, false,
+                                      {}, nullptr),
+                 "scalar attention should provide reference path");
+    const float *neonAttentionValues = neonAttentionOut.DataAsFloat32();
+    const float *scalarAttentionValues = scalarAttentionOut.DataAsFloat32();
+    bool attentionMatches =
+        neonAttentionValues != nullptr && scalarAttentionValues != nullptr;
+    for (std::size_t index = 0; attentionMatches && index < 6U; ++index) {
+      const float diff =
+          neonAttentionValues[index] - scalarAttentionValues[index];
+      attentionMatches = std::abs(diff) <= 1e-5F;
+    }
+    ok &= Expect(attentionMatches,
+                 "neon attention should match scalar fp32 outputs");
+
+    us4::Tensor cacheKeys({1, 4}, us4::DType::kFloat32, us4::DeviceType::kCpu);
+    us4::Tensor cacheValues({1, 3}, us4::DType::kFloat32,
+                            us4::DeviceType::kCpu);
+    us4::Tensor causalNeonOut({2, 3}, us4::DType::kFloat32,
+                              us4::DeviceType::kCpu);
+    us4::Tensor causalScalarOut({2, 3}, us4::DType::kFloat32,
+                                us4::DeviceType::kCpu);
+    float *cacheKeyData = cacheKeys.MutableDataAsFloat32();
+    float *cacheValueData = cacheValues.MutableDataAsFloat32();
+    for (std::size_t index = 0; index < 4U; ++index) {
+      cacheKeyData[index] =
+          (static_cast<float>((index % 7U) + 1U) * 0.07F) + 0.11F;
+    }
+    for (std::size_t index = 0; index < 3U; ++index) {
+      cacheValueData[index] =
+          (static_cast<float>((index % 7U) + 1U) * 0.18F) + 0.02F;
+    }
+    const us4::AttentionCacheView cache{&cacheKeys, &cacheValues};
+    ok &=
+        Expect(us4::NeonAttention(attentionQuery, attentionKey, attentionValue,
+                                  causalNeonOut, true, cache, nullptr),
+               "neon attention should support causal cache path");
+    ok &= Expect(us4::ScalarAttention(attentionQuery, attentionKey,
+                                      attentionValue, causalScalarOut, true,
+                                      cache, nullptr),
+                 "scalar attention should support causal cache reference");
+    const float *causalNeonValues = causalNeonOut.DataAsFloat32();
+    const float *causalScalarValues = causalScalarOut.DataAsFloat32();
+    bool causalMatches =
+        causalNeonValues != nullptr && causalScalarValues != nullptr;
+    for (std::size_t index = 0; causalMatches && index < 6U; ++index) {
+      const float diff = causalNeonValues[index] - causalScalarValues[index];
+      causalMatches = std::abs(diff) <= 1e-5F;
+    }
+    ok &= Expect(causalMatches,
+                 "neon attention should match scalar outputs with cache");
+
+    us4::Tensor wideValue({3, 5}, us4::DType::kFloat32, us4::DeviceType::kCpu);
+    us4::Tensor wideCacheValues({1, 5}, us4::DType::kFloat32,
+                                us4::DeviceType::kCpu);
+    us4::Tensor wideNeonOut({2, 5}, us4::DType::kFloat32,
+                            us4::DeviceType::kCpu);
+    us4::Tensor wideScalarOut({2, 5}, us4::DType::kFloat32,
+                              us4::DeviceType::kCpu);
+    float *wideValueData = wideValue.MutableDataAsFloat32();
+    float *wideCacheValueData = wideCacheValues.MutableDataAsFloat32();
+    for (std::size_t index = 0; index < 15U; ++index) {
+      wideValueData[index] =
+          (static_cast<float>((index % 7U) + 1U) * 0.11F) - 0.04F;
+    }
+    for (std::size_t index = 0; index < 5U; ++index) {
+      wideCacheValueData[index] =
+          (static_cast<float>((index % 7U) + 1U) * 0.16F) + 0.07F;
+    }
+    const us4::AttentionCacheView wideCache{&cacheKeys, &wideCacheValues};
+    ok &= Expect(us4::NeonAttention(attentionQuery, attentionKey, wideValue,
+                                    wideNeonOut, true, wideCache, nullptr),
+                 "neon attention should support wide value tail accumulation");
+    ok &= Expect(us4::ScalarAttention(attentionQuery, attentionKey, wideValue,
+                                      wideScalarOut, true, wideCache, nullptr),
+                 "scalar attention should provide wide value tail reference");
+    const float *wideNeonValues = wideNeonOut.DataAsFloat32();
+    const float *wideScalarValues = wideScalarOut.DataAsFloat32();
+    bool wideMatches = wideNeonValues != nullptr && wideScalarValues != nullptr;
+    for (std::size_t index = 0; wideMatches && index < 10U; ++index) {
+      const float diff = wideNeonValues[index] - wideScalarValues[index];
+      wideMatches = std::abs(diff) <= 1e-5F;
+    }
+    ok &= Expect(
+        wideMatches,
+        "neon attention should match scalar outputs for wide value tails");
+
+    us4::Tensor fp16MatmulLhs({2, 3}, us4::DType::kFloat16,
+                              us4::DeviceType::kCpu);
+    us4::Tensor fp16MatmulRhs({3, 5}, us4::DType::kFloat16,
+                              us4::DeviceType::kCpu);
+    us4::Tensor fp16NeonOut({2, 5}, us4::DType::kFloat32,
+                            us4::DeviceType::kCpu);
+    us4::Tensor fp16ScalarLhs({2, 3}, us4::DType::kFloat32,
+                              us4::DeviceType::kCpu);
+    us4::Tensor fp16ScalarRhs({3, 5}, us4::DType::kFloat32,
+                              us4::DeviceType::kCpu);
+    us4::Tensor fp16ScalarOut({2, 5}, us4::DType::kFloat32,
+                              us4::DeviceType::kCpu);
+    const std::vector<float> fp16LhsValues = {0.5F, -1.0F, 2.0F,
+                                              1.5F, 0.25F, -0.75F};
+    const std::vector<float> fp16RhsValues = {
+        0.25F, -0.5F, 1.0F,   0.75F, -1.25F, 1.5F,  0.0F, -0.25F,
+        0.5F,  1.0F,  -0.75F, 0.25F, 0.5F,   -1.5F, 0.25F};
+    FillHalfTensor(fp16MatmulLhs, fp16LhsValues, false);
+    FillHalfTensor(fp16MatmulRhs, fp16RhsValues, false);
+    ok &= Expect(FillHalfReferenceTensor(fp16ScalarLhs, fp16LhsValues, false),
+                 "scalar matmul should receive fp16-rounded lhs reference");
+    ok &= Expect(FillHalfReferenceTensor(fp16ScalarRhs, fp16RhsValues, false),
+                 "scalar matmul should receive fp16-rounded rhs reference");
+    ok &= Expect(
+        us4::NeonMatmul(fp16MatmulLhs, fp16MatmulRhs, fp16NeonOut, nullptr),
+        "neon matmul should execute fp16 inputs");
+    ok &= Expect(
+        us4::ScalarMatmul(fp16ScalarLhs, fp16ScalarRhs, fp16ScalarOut, nullptr),
+        "scalar matmul should provide fp16 reference");
+    const float *fp16NeonValues = fp16NeonOut.DataAsFloat32();
+    const float *fp16ScalarValues = fp16ScalarOut.DataAsFloat32();
+    bool fp16Matches = fp16NeonValues != nullptr && fp16ScalarValues != nullptr;
+    for (std::size_t index = 0; fp16Matches && index < 10U; ++index) {
+      const float diff = fp16NeonValues[index] - fp16ScalarValues[index];
+      fp16Matches = std::abs(diff) <= 1e-3F;
+    }
+    ok &= Expect(fp16Matches,
+                 "neon matmul should match scalar outputs for fp16 inputs");
+
+    us4::Tensor bf16MatmulLhs({3, 4}, us4::DType::kBFloat16,
+                              us4::DeviceType::kCpu);
+    us4::Tensor bf16MatmulRhs({4, 6}, us4::DType::kBFloat16,
+                              us4::DeviceType::kCpu);
+    us4::Tensor bf16NeonOut({3, 6}, us4::DType::kFloat32,
+                            us4::DeviceType::kCpu);
+    us4::Tensor bf16ScalarLhs({3, 4}, us4::DType::kFloat32,
+                              us4::DeviceType::kCpu);
+    us4::Tensor bf16ScalarRhs({4, 6}, us4::DType::kFloat32,
+                              us4::DeviceType::kCpu);
+    us4::Tensor bf16ScalarOut({3, 6}, us4::DType::kFloat32,
+                              us4::DeviceType::kCpu);
+    const std::vector<float> bf16LhsValues = {0.125F, 0.5F,   -0.75F, 1.25F,
+                                              -1.0F,  0.375F, 0.875F, -0.5F,
+                                              0.625F, -0.25F, 1.5F,   0.75F};
+    const std::vector<float> bf16RhsValues = {
+        0.25F, -0.5F, 0.75F,  1.0F,    -0.25F, 0.5F,    -0.75F, 0.125F,
+        0.5F,  -1.0F, 0.25F,  0.875F,  1.125F, -0.625F, 0.375F, 0.25F,
+        -0.5F, 0.75F, 0.625F, -0.125F, 1.0F,   -0.75F,  0.5F,   -0.25F};
+    FillHalfTensor(bf16MatmulLhs, bf16LhsValues, true);
+    FillHalfTensor(bf16MatmulRhs, bf16RhsValues, true);
+    ok &= Expect(FillHalfReferenceTensor(bf16ScalarLhs, bf16LhsValues, true),
+                 "scalar matmul should receive bf16-rounded lhs reference");
+    ok &= Expect(FillHalfReferenceTensor(bf16ScalarRhs, bf16RhsValues, true),
+                 "scalar matmul should receive bf16-rounded rhs reference");
+    ok &= Expect(
+        us4::NeonMatmul(bf16MatmulLhs, bf16MatmulRhs, bf16NeonOut, nullptr),
+        "neon matmul should execute bf16 inputs");
+    ok &= Expect(
+        us4::ScalarMatmul(bf16ScalarLhs, bf16ScalarRhs, bf16ScalarOut, nullptr),
+        "scalar matmul should provide bf16 reference");
+    const float *bf16NeonValues = bf16NeonOut.DataAsFloat32();
+    const float *bf16ScalarValues = bf16ScalarOut.DataAsFloat32();
+    bool bf16Matches = bf16NeonValues != nullptr && bf16ScalarValues != nullptr;
+    for (std::size_t index = 0; bf16Matches && index < 18U; ++index) {
+      const float diff = bf16NeonValues[index] - bf16ScalarValues[index];
+      bf16Matches = std::abs(diff) <= 1e-2F;
+    }
+    ok &= Expect(bf16Matches,
+                 "neon matmul should match scalar outputs for bf16 inputs");
+
     us4::HardwareProbeResult narrowNeonProbe = neonProbe;
     narrowNeonProbe.neonVectorBits = 64;
     const us4::QwenAdapter qwenAdapter;
@@ -439,6 +728,60 @@ int main() {
         narrowNeonProbe, us4::RuntimeMode::kMicroPlus, qwenAdapter);
     ok &= Expect(narrowSelection.selected == us4::BackendType::kScalarCpu,
                  "narrow neon vectors should fall back to scalar");
+
+    us4::Tensor matmulLhs({2, 3}, us4::DType::kFloat32, us4::DeviceType::kCpu);
+    us4::Tensor matmulRhs({3, 4}, us4::DType::kFloat32, us4::DeviceType::kCpu);
+    us4::Tensor matmulOut({2, 4}, us4::DType::kFloat32, us4::DeviceType::kCpu);
+    float *lhsData = matmulLhs.MutableDataAsFloat32();
+    float *rhsData = matmulRhs.MutableDataAsFloat32();
+    lhsData[0] = 1.0F;
+    lhsData[1] = 2.0F;
+    lhsData[2] = 3.0F;
+    lhsData[3] = 4.0F;
+    lhsData[4] = 5.0F;
+    lhsData[5] = 6.0F;
+    rhsData[0] = 1.0F;
+    rhsData[1] = 0.0F;
+    rhsData[2] = 2.0F;
+    rhsData[3] = 1.0F;
+    rhsData[4] = 0.0F;
+    rhsData[5] = 1.0F;
+    rhsData[6] = 3.0F;
+    rhsData[7] = 0.0F;
+    rhsData[8] = 1.0F;
+    rhsData[9] = 1.0F;
+    rhsData[10] = 0.0F;
+    rhsData[11] = 2.0F;
+    ok &= Expect(us4::NeonMatmul(matmulLhs, matmulRhs, matmulOut, nullptr),
+                 "neon matmul should execute fp32 fast path");
+    const float *matmulValues = matmulOut.DataAsFloat32();
+    ok &= Expect(matmulValues != nullptr && matmulValues[6] == 23.0F,
+                 "neon matmul should preserve expected fp32 result");
+
+    us4::Tensor tailLhs({3, 7}, us4::DType::kFloat32, us4::DeviceType::kCpu);
+    us4::Tensor tailRhs({7, 6}, us4::DType::kFloat32, us4::DeviceType::kCpu);
+    us4::Tensor tailNeon({3, 6}, us4::DType::kFloat32, us4::DeviceType::kCpu);
+    us4::Tensor tailScalar({3, 6}, us4::DType::kFloat32, us4::DeviceType::kCpu);
+    float *tailLhsData = tailLhs.MutableDataAsFloat32();
+    float *tailRhsData = tailRhs.MutableDataAsFloat32();
+    for (std::size_t index = 0; index < 21U; ++index) {
+      tailLhsData[index] = static_cast<float>((index % 5U) - 2U);
+    }
+    for (std::size_t index = 0; index < 42U; ++index) {
+      tailRhsData[index] = static_cast<float>((index % 7U) - 3U) * 0.5F;
+    }
+    ok &= Expect(us4::NeonMatmul(tailLhs, tailRhs, tailNeon, nullptr),
+                 "neon matmul should handle tail columns");
+    ok &= Expect(us4::ScalarMatmul(tailLhs, tailRhs, tailScalar, nullptr),
+                 "scalar matmul should provide tail-column reference");
+    const float *tailNeonValues = tailNeon.DataAsFloat32();
+    const float *tailScalarValues = tailScalar.DataAsFloat32();
+    bool tailMatches = tailNeonValues != nullptr && tailScalarValues != nullptr;
+    for (std::size_t index = 0; tailMatches && index < 18U; ++index) {
+      tailMatches = tailNeonValues[index] == tailScalarValues[index];
+    }
+    ok &= Expect(tailMatches,
+                 "neon matmul should match scalar results for tail columns");
 
     us4::Tensor int8Weights({4}, us4::DType::kInt8, us4::DeviceType::kCpu);
     us4::Tensor int8Output({4}, us4::DType::kFloat32, us4::DeviceType::kCpu);

@@ -24,8 +24,24 @@ Caminhos quentes em NEON (ARM SIMD): matmul, attention, dequantizacao INT8/INT4.
 - `runtime/neon/kernel_profile.{h,cpp}` agora descreve o shape SIMD pretendido para matmul e attention (`fp32-lane4`, `fp16-lane8`, `bf16-lane8`, `int8-dot`).
 - `runtime/neon/dequant_int8.{h,cpp}` e `runtime/neon/dequant_int4.{h,cpp}` agora cobrem o contrato base de dequantizacao group-wise para pesos low-bit.
 - O selector de backend agora considera `neon_vector_bits` e elegibilidade de cluster CPU antes de escolher NEON automaticamente.
-- O contract runner e a suite GTest ja verificam tile shape, lane width, fused softmax-rescale e fallback para hosts nao-ARM.
-- Ainda faltam intrinsics reais, kernels fused, bench e integracao de geracao no caminho NEON.
+- `runtime/neon/neon_matmul.cpp` agora executa um microkernel dedicado `fp32 1x4`, usando `arm_neon.h` com lanes de 4 floats em hosts ARM e mantendo fallback contratual para os demais casos.
+- `runtime/neon/neon_matmul.cpp` agora tambem executa `fp16` e `bf16`, acumulando em `fp32`, o que aproxima a execucao real dos flavors `fp16-lane8` e `bf16-lane8` ja expostos pelo planner.
+- `runtime/neon/neon_attention.cpp` agora saiu do bridge puro e executa o primeiro caminho fp32 NEON para attention rank-2, preservando `causalMask`, `AttentionCacheView` e fallback escalar fora de ARM.
+- esse caminho de `neon_attention` agora tambem faz normalizacao por linha e acumulacao vetorial no eixo de `value`, com tail scalar quando `valueWidth` nao fecha em 4 lanes.
+- O contract runner e a suite GTest ja verificam tile shape, lane width, fused softmax-rescale, parity com scalar em attention/matmul e fallback para hosts nao-ARM.
+- Ainda faltam ampliar os hot paths com vetorizaçao mais forte para `fp16/bf16`, abrir `INT8 dotprod`, fechar block GEMM/tuning e consolidar bench consistente do caminho NEON.
+
+## Observabilidade atual
+
+- `runtime/benchmarks/dense_baseline.cpp` agora roda os casos low-bit em pares
+  `scalar` vs `neon`
+- Cada execucao publica `requested_backend`, `observed_backend`,
+  `backend_reason`, `fell_back`, `dequant_path`, `neon_kernel_flavor`,
+  `text_fingerprint`, `elapsed_ms` e `regression_status`
+- `lowbit-int8` e `lowbit-int4` agora ficam comparaveis sem depender de
+  instrumentacao no backend pesado
+- `warn` significa fallback observavel com saida equivalente ao baseline
+  scalar; `fail` sinaliza drift de output ou metadata low-bit fora do contrato
 
 ## Tasks
 

@@ -1,8 +1,10 @@
 #include "adapters/dense_adapter_base.h"
 
 #include <cctype>
+#include <cmath>
 #include <cstdint>
 #include <functional>
+#include <limits>
 #include <sstream>
 #include <string>
 #include <utility>
@@ -13,7 +15,11 @@
 #include "cpu/scalar_attention.h"
 #include "cpu/scalar_matmul.h"
 #include "metal/dense_dispatch.h"
+#include "neon/dequant_int4.h"
+#include "neon/dequant_int8.h"
 #include "neon/kernel_profile.h"
+#include "neon/neon_attention.h"
+#include "neon/neon_matmul.h"
 
 namespace us4 {
 
@@ -37,6 +43,81 @@ std::string NormalizeToken(const std::string_view token) {
     }
   }
   return normalized;
+}
+
+std::string BuildPromptCacheKey(const std::string_view family,
+                                const std::uint32_t seed,
+                                const std::vector<std::string> &promptTokens) {
+  std::ostringstream stream;
+  stream << family << ":" << seed << ":";
+  for (const std::string &token : promptTokens) {
+    stream << NormalizeToken(token) << '|';
+  }
+  return family.empty()
+             ? "kv:anonymous:" +
+                   std::to_string(std::hash<std::string>{}(stream.str()))
+             : "kv:" + std::string(family) + ":" +
+                   std::to_string(std::hash<std::string>{}(stream.str()));
+}
+
+std::size_t MaybeCompactPromptKv(RuntimeContext &context,
+                                 const std::string &prefixKey,
+                                 std::vector<float> &keyBuffer,
+                                 std::vector<float> &valueBuffer) {
+  constexpr std::size_t kKeepRecentRows = 3U;
+  if (RuntimeModeRank(context.mode()) > RuntimeModeRank(RuntimeMode::kMicro)) {
+    return 0U;
+  }
+  if (keyBuffer.size() != valueBuffer.size() ||
+      (keyBuffer.size() % kHiddenSize) != 0U) {
+    return 0U;
+  }
+
+  const std::size_t rowCount = keyBuffer.size() / kHiddenSize;
+  if (rowCount <= (kKeepRecentRows + 1U)) {
+    return 0U;
+  }
+
+  const std::size_t summaryInputRows = rowCount - kKeepRecentRows;
+  const std::size_t summaryInputValues = summaryInputRows * kHiddenSize;
+  const std::vector<float> summaryKeys = context.summarizer().SummarizeRows(
+      {keyBuffer.begin(),
+       keyBuffer.begin() + static_cast<std::ptrdiff_t>(summaryInputValues)},
+      kHiddenSize);
+  const std::vector<float> summaryValues = context.summarizer().SummarizeRows(
+      {valueBuffer.begin(),
+       valueBuffer.begin() + static_cast<std::ptrdiff_t>(summaryInputValues)},
+      kHiddenSize);
+  if (summaryKeys.size() != kHiddenSize ||
+      summaryValues.size() != kHiddenSize) {
+    return 0U;
+  }
+
+  (void)context.coldStore().Flush(prefixKey + "-keys", keyBuffer);
+  (void)context.coldStore().Flush(prefixKey + "-values", valueBuffer);
+
+  std::vector<float> compactedKeys;
+  std::vector<float> compactedValues;
+  compactedKeys.reserve((kKeepRecentRows + 1U) * kHiddenSize);
+  compactedValues.reserve((kKeepRecentRows + 1U) * kHiddenSize);
+  compactedKeys.insert(compactedKeys.end(), summaryKeys.begin(),
+                       summaryKeys.end());
+  compactedValues.insert(compactedValues.end(), summaryValues.begin(),
+                         summaryValues.end());
+
+  const std::size_t recentOffset = (rowCount - kKeepRecentRows) * kHiddenSize;
+  compactedKeys.insert(compactedKeys.end(),
+                       keyBuffer.begin() +
+                           static_cast<std::ptrdiff_t>(recentOffset),
+                       keyBuffer.end());
+  compactedValues.insert(compactedValues.end(),
+                         valueBuffer.begin() +
+                             static_cast<std::ptrdiff_t>(recentOffset),
+                         valueBuffer.end());
+
+  keyBuffer = std::move(compactedKeys);
+  valueBuffer = std::move(compactedValues);
+  return summaryInputRows - 1U;
 }
 
 float DeterministicValue(const std::uint32_t seed, const std::uint32_t a,
@@ -102,6 +183,124 @@ std::string ResolveDequantPath(const ModelAsset *asset) {
   default:
     return "none";
   }
+}
+
+struct GroupwiseQuantizedProjection {
+  Tensor tensor;
+  std::vector<float> scales;
+};
+
+std::vector<float> BuildGroupScales(const std::vector<float> &source,
+                                    const std::size_t groupSize,
+                                    const float maxQuantAbs) {
+  const std::size_t groupCount = (source.size() + groupSize - 1U) / groupSize;
+  std::vector<float> scales(groupCount, 1.0F);
+  for (std::size_t groupIndex = 0; groupIndex < groupCount; ++groupIndex) {
+    const std::size_t begin = groupIndex * groupSize;
+    const std::size_t end = std::min(source.size(), begin + groupSize);
+    float maxAbs = 0.0F;
+    for (std::size_t index = begin; index < end; ++index) {
+      maxAbs = std::max(maxAbs, std::fabs(source[index]));
+    }
+    scales[groupIndex] = maxAbs > std::numeric_limits<float>::epsilon()
+                             ? maxAbs / maxQuantAbs
+                             : 1.0F;
+  }
+  return scales;
+}
+
+GroupwiseQuantizedProjection
+QuantizeProjectionInt8(const std::vector<float> &source,
+                       const std::vector<std::size_t> &shape,
+                       const std::size_t groupSize) {
+  GroupwiseQuantizedProjection projection{
+      .tensor = Tensor(shape, DType::kInt8),
+      .scales = BuildGroupScales(source, groupSize, 127.0F),
+  };
+
+  auto *bytes =
+      reinterpret_cast<std::int8_t *>(projection.tensor.MutableData());
+  for (std::size_t index = 0; index < source.size(); ++index) {
+    const std::size_t groupIndex = index / groupSize;
+    const float scale = projection.scales[groupIndex];
+    const float normalized = scale > std::numeric_limits<float>::epsilon()
+                                 ? source[index] / scale
+                                 : 0.0F;
+    const long rounded = std::lround(normalized);
+    bytes[index] =
+        static_cast<std::int8_t>(std::clamp<long>(rounded, -127L, 127L));
+  }
+
+  return projection;
+}
+
+std::uint8_t EncodeSignedNibble(const std::int8_t value) {
+  return static_cast<std::uint8_t>(value < 0 ? value + 16 : value) & 0x0FU;
+}
+
+GroupwiseQuantizedProjection
+QuantizeProjectionInt4(const std::vector<float> &source,
+                       const std::vector<std::size_t> &shape,
+                       const std::size_t groupSize) {
+  GroupwiseQuantizedProjection projection{
+      .tensor = Tensor(shape, DType::kInt4),
+      .scales = BuildGroupScales(source, groupSize, 7.0F),
+  };
+
+  auto *bytes =
+      reinterpret_cast<std::uint8_t *>(projection.tensor.MutableData());
+  std::fill(bytes, bytes + projection.tensor.ByteSize(), 0U);
+  for (std::size_t index = 0; index < source.size(); ++index) {
+    const std::size_t groupIndex = index / groupSize;
+    const float scale = projection.scales[groupIndex];
+    const float normalized = scale > std::numeric_limits<float>::epsilon()
+                                 ? source[index] / scale
+                                 : 0.0F;
+    const long rounded = std::lround(normalized);
+    const std::int8_t clamped =
+        static_cast<std::int8_t>(std::clamp<long>(rounded, -8L, 7L));
+    const std::uint8_t nibble = EncodeSignedNibble(clamped);
+    const std::size_t byteIndex = index / 2U;
+    if (index % 2U == 0U) {
+      bytes[byteIndex] =
+          static_cast<std::uint8_t>((bytes[byteIndex] & 0xF0U) | nibble);
+    } else {
+      bytes[byteIndex] = static_cast<std::uint8_t>((bytes[byteIndex] & 0x0FU) |
+                                                   (nibble << 4U));
+    }
+  }
+
+  return projection;
+}
+
+bool MaterializeProjectionTensor(const std::vector<float> &source,
+                                 const std::vector<std::size_t> &shape,
+                                 const ModelAsset *asset, Tensor &projection,
+                                 std::string *error) {
+  if (asset == nullptr || asset->weightDType == DType::kFloat32 ||
+      asset->weightDType == DType::kFloat16 ||
+      asset->weightDType == DType::kBFloat16) {
+    CopyVectorToTensor(source, projection);
+    return true;
+  }
+
+  constexpr std::size_t kQuantGroupSize = 8U;
+  if (asset->weightDType == DType::kInt8) {
+    GroupwiseQuantizedProjection quantized =
+        QuantizeProjectionInt8(source, shape, kQuantGroupSize);
+    return DequantizeInt8Groups(quantized.tensor, kQuantGroupSize,
+                                quantized.scales, projection, error);
+  }
+  if (asset->weightDType == DType::kInt4) {
+    GroupwiseQuantizedProjection quantized =
+        QuantizeProjectionInt4(source, shape, kQuantGroupSize);
+    return DequantizeInt4Groups(quantized.tensor, source.size(),
+                                kQuantGroupSize, quantized.scales, projection,
+                                error);
+  }
+
+  CopyVectorToTensor(source, projection);
+  return true;
 }
 
 } // namespace
@@ -175,6 +374,7 @@ DenseAdapterBase::Tokenize(const std::string_view text) const {
 GenerationResult
 DenseAdapterBase::Generate(const GenerationRequest &request,
                            const RuntimeContext &context) const {
+  RuntimeContext &mutableContext = const_cast<RuntimeContext &>(context);
   const BackendSelection backendSelection = SelectBackend(
       context.hardware(), context.mode(), *this, request.requestedBackend);
   RecordBackendScaffold(*this, backendSelection, request, context);
@@ -202,28 +402,67 @@ DenseAdapterBase::Generate(const GenerationRequest &request,
     tokenIds.push_back(TokenIdFor(token, vocabulary));
   }
 
+  const std::string prefixKey =
+      BuildPromptCacheKey(family_, activeSeed, promptTokens);
+  mutableContext.prefixCache().Retain(prefixKey);
+
+  std::vector<float> keyBuffer;
+  std::vector<float> valueBuffer;
+  bool kvCacheHit = false;
+  bool kvRestoredFromColdStore = false;
+  std::size_t kvSummaryRows = 0U;
+  const std::optional<KvPage> cachedPrefix =
+      mutableContext.kvPager().Lookup(prefixKey);
+  if (cachedPrefix.has_value() && cachedPrefix->rowWidth == kHiddenSize &&
+      cachedPrefix->rowCount > 0U &&
+      cachedPrefix->rowCount <= tokenIds.size() &&
+      cachedPrefix->keys.size() == cachedPrefix->rowCount * kHiddenSize &&
+      cachedPrefix->values.size() == cachedPrefix->rowCount * kHiddenSize) {
+    keyBuffer = cachedPrefix->keys;
+    valueBuffer = cachedPrefix->values;
+    kvCacheHit = true;
+  } else {
+    const std::optional<std::vector<float>> restoredKeys =
+        mutableContext.coldStore().Restore(prefixKey + "-keys");
+    const std::optional<std::vector<float>> restoredValues =
+        mutableContext.coldStore().Restore(prefixKey + "-values");
+    if (restoredKeys.has_value() && restoredValues.has_value() &&
+        restoredKeys->size() == tokenIds.size() * kHiddenSize &&
+        restoredValues->size() == tokenIds.size() * kHiddenSize) {
+      keyBuffer = *restoredKeys;
+      valueBuffer = *restoredValues;
+      kvCacheHit = true;
+      kvRestoredFromColdStore = true;
+    } else {
+      keyBuffer.reserve(tokenIds.size() * kHiddenSize);
+      valueBuffer.reserve(tokenIds.size() * kHiddenSize);
+      for (std::size_t index = 0; index < tokenIds.size(); ++index) {
+        const std::vector<float> embedding =
+            BuildTokenEmbedding(tokenIds[index], kHiddenSize, activeSeed);
+        for (std::size_t hidden = 0; hidden < kHiddenSize; ++hidden) {
+          keyBuffer.push_back(embedding[hidden]);
+          valueBuffer.push_back(embedding[hidden] +
+                                static_cast<float>(index % 3U) * 0.01F);
+        }
+      }
+    }
+
+    kvSummaryRows =
+        MaybeCompactPromptKv(mutableContext, prefixKey, keyBuffer, valueBuffer);
+    mutableContext.kvPager().Append(prefixKey, keyBuffer, valueBuffer,
+                                    kHiddenSize);
+  }
+
   std::vector<std::string> generatedTokens;
   generatedTokens.reserve(request.maxTokens);
   for (std::size_t step = 0; step < request.maxTokens; ++step) {
-    const std::size_t sequenceLength = tokenIds.size();
+    const std::size_t sequenceLength = keyBuffer.size() / kHiddenSize;
     Tensor key({sequenceLength, kHiddenSize}, DType::kFloat32);
     Tensor value({sequenceLength, kHiddenSize}, DType::kFloat32);
     Tensor query({1, kHiddenSize}, DType::kFloat32);
     Tensor contextTensor({1, kHiddenSize}, DType::kFloat32);
     Tensor projection({kHiddenSize, vocabulary.size()}, DType::kFloat32);
     Tensor logits({1, vocabulary.size()}, DType::kFloat32);
-
-    std::vector<float> keyBuffer(sequenceLength * kHiddenSize, 0.0F);
-    std::vector<float> valueBuffer(sequenceLength * kHiddenSize, 0.0F);
-    for (std::size_t index = 0; index < sequenceLength; ++index) {
-      const std::vector<float> embedding =
-          BuildTokenEmbedding(tokenIds[index], kHiddenSize, activeSeed);
-      for (std::size_t hidden = 0; hidden < kHiddenSize; ++hidden) {
-        keyBuffer[index * kHiddenSize + hidden] = embedding[hidden];
-        valueBuffer[index * kHiddenSize + hidden] =
-            embedding[hidden] + static_cast<float>((index + step) % 3U) * 0.01F;
-      }
-    }
 
     CopyVectorToTensor(keyBuffer, key);
     CopyVectorToTensor(valueBuffer, value);
@@ -234,15 +473,31 @@ DenseAdapterBase::Generate(const GenerationRequest &request,
       queryVector[hidden] += static_cast<float>((step + hidden) % 5U) * 0.02F;
     }
     CopyVectorToTensor(queryVector, query);
-    CopyVectorToTensor(
-        BuildOutputProjection(vocabulary, kHiddenSize, activeSeed), projection);
 
     std::string error;
-    if (!ScalarAttention(query, key, value, contextTensor, false, {}, &error)) {
+    const std::vector<float> outputProjection =
+        BuildOutputProjection(vocabulary, kHiddenSize, activeSeed);
+    if (!MaterializeProjectionTensor(outputProjection,
+                                     {kHiddenSize, vocabulary.size()},
+                                     request.asset, projection, &error)) {
+      generatedTokens.push_back("projection-error");
+      break;
+    }
+
+    const bool attentionOk =
+        backendSelection.selected == BackendType::kNeon
+            ? NeonAttention(query, key, value, contextTensor, false, {}, &error)
+            : ScalarAttention(query, key, value, contextTensor, false, {},
+                              &error);
+    if (!attentionOk) {
       generatedTokens.push_back("attention-error");
       break;
     }
-    if (!ScalarMatmul(contextTensor, projection, logits, &error)) {
+    const bool matmulOk =
+        backendSelection.selected == BackendType::kNeon
+            ? NeonMatmul(contextTensor, projection, logits, &error)
+            : ScalarMatmul(contextTensor, projection, logits, &error);
+    if (!matmulOk) {
       generatedTokens.push_back("matmul-error");
       break;
     }
@@ -262,6 +517,15 @@ DenseAdapterBase::Generate(const GenerationRequest &request,
 
     generatedTokens.push_back(vocabulary[bestIndex]);
     tokenIds.push_back(bestIndex);
+
+    const std::vector<float> nextEmbedding =
+        BuildTokenEmbedding(bestIndex, kHiddenSize, activeSeed);
+    for (std::size_t hidden = 0; hidden < kHiddenSize; ++hidden) {
+      keyBuffer.push_back(nextEmbedding[hidden]);
+      valueBuffer.push_back(nextEmbedding[hidden] +
+                            static_cast<float>((sequenceLength + step) % 3U) *
+                                0.01F);
+    }
   }
 
   GenerationResult result;
@@ -288,6 +552,14 @@ DenseAdapterBase::Generate(const GenerationRequest &request,
       context.mlxBridge().LastPlan().has_value()
           ? context.mlxBridge().LastPlan()->operations.size()
           : 0U;
+  result.kvCacheHit = kvCacheHit;
+  result.kvRestoredFromColdStore = kvRestoredFromColdStore;
+  result.kvPageCount = mutableContext.kvPager().PageCount();
+  result.kvHotPages = mutableContext.kvPager().HotPageCount();
+  result.kvWarmPages = mutableContext.kvPager().WarmPageCount();
+  result.kvColdPages = mutableContext.kvPager().ColdPageCount();
+  result.kvSummaryRows = kvSummaryRows;
+  result.prefixCacheEntries = mutableContext.prefixCache().EntryCount();
   result.mlxPlanBuilt = context.mlxBridge().LastPlan().has_value();
   result.mlxEvaluated = context.mlxBridge().LastEvaluationSucceeded();
   result.weightDType = request.asset != nullptr
