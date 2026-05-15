@@ -24,6 +24,7 @@ add_library(us4_runtime_core
   kv/summarizer.cpp
   memory/unified_allocator.cpp
   metal/command_queue.cpp
+  metal/kernel_library.cpp
   mlx/mlx_bridge.cpp
   moe/expert_pager.cpp
   moe/router.cpp

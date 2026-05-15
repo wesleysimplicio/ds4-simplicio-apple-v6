@@ -16,6 +16,7 @@
 #include "kv/summarizer.h"
 #include "memory/unified_allocator.h"
 #include "metal/command_queue.h"
+#include "metal/kernel_library.h"
 #include "mlx/mlx_bridge.h"
 #include "moe/expert_pager.h"
 #include "moe/router.h"
@@ -129,8 +130,15 @@ int main() {
     ok &= Expect(context.metalQueue().Dispatch(us4::MetalKernelKind::kSoftmax, 2, 64, shared),
                  "metal queue should record dispatch contract");
     ok &= Expect(context.metalQueue().DispatchCount() == 1U, "metal queue should count dispatches");
+    ok &= Expect(context.metalQueue().Dispatches().front().entryPoint == "us4_softmax_rows",
+                 "metal queue should surface dispatch entry point");
+    ok &= Expect(context.metalQueue().Dispatches().front().relativePath == "runtime/metal/kernels/softmax.metal",
+                 "metal queue should surface dispatch kernel path");
     ok &= Expect(context.mlxBridge().BuildDensePlan("llama", 32, shared), "mlx bridge should build dense plan");
     ok &= Expect(context.mlxBridge().EvaluateLastPlan(), "mlx bridge should evaluate last plan");
+    ok &= Expect(us4::GetMetalKernelCatalog().size() == 3U, "metal kernel catalog should keep 3 kernels");
+    ok &= Expect(us4::FindMetalKernel(us4::MetalKernelKind::kRmsNorm) != nullptr,
+                 "metal kernel catalog should resolve rmsnorm");
   }
 
   {

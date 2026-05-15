@@ -4,6 +4,7 @@
 #include "core/runtime_context.h"
 #include "memory/unified_allocator.h"
 #include "metal/command_queue.h"
+#include "metal/kernel_library.h"
 #include "mlx/mlx_bridge.h"
 
 namespace {
@@ -48,8 +49,22 @@ TEST(RuntimeAccelerationContractTest, MetalQueueRecordsSharedDispatches) {
 
   EXPECT_TRUE(context.metalQueue().Dispatch(us4::MetalKernelKind::kMatmul, 4, 32, shared));
   ASSERT_EQ(context.metalQueue().DispatchCount(), 1U);
+  EXPECT_EQ(context.metalQueue().Dispatches().front().entryPoint, "us4_matmul_fp16");
+  EXPECT_EQ(context.metalQueue().Dispatches().front().relativePath, "runtime/metal/kernels/matmul.metal");
   EXPECT_TRUE(context.metalQueue().Dispatches().front().usesSharedAllocation);
   EXPECT_EQ(context.metalQueue().Reason(), "metal-dispatch-recorded");
+}
+
+TEST(RuntimeAccelerationContractTest, MetalKernelCatalogExposesKernelMetadata) {
+  const auto& catalog = us4::GetMetalKernelCatalog();
+
+  ASSERT_EQ(catalog.size(), 3U);
+  EXPECT_NE(us4::FindMetalKernel(us4::MetalKernelKind::kMatmul), nullptr);
+  EXPECT_NE(us4::FindMetalKernel(us4::MetalKernelKind::kSoftmax), nullptr);
+  EXPECT_NE(us4::FindMetalKernel(us4::MetalKernelKind::kRmsNorm), nullptr);
+  EXPECT_EQ(catalog[1].entryPoint, "us4_softmax_rows");
+  EXPECT_EQ(catalog[2].relativePath, "runtime/metal/kernels/rmsnorm.metal");
+  EXPECT_FALSE(catalog[0].source.empty());
 }
 
 TEST(RuntimeAccelerationContractTest, MlxBridgeBuildsAndEvaluatesDensePlan) {

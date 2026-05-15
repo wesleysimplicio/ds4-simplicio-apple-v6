@@ -19,6 +19,8 @@ enum class MetalKernelKind {
 
 struct MetalDispatchRecord {
   MetalKernelKind kernel = MetalKernelKind::kMatmul;
+  std::string_view entryPoint;
+  std::string_view relativePath;
   std::size_t threadgroups = 0;
   std::size_t threadsPerGroup = 0;
   bool usesSharedAllocation = false;

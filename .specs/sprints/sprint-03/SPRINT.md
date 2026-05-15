@@ -19,6 +19,7 @@ Integrar MLX e Metal. Command queue + kernels matmul Metal, MLX bridge, KV em me
 
 ## Estado atual no repo em 2026-05-15
 - `runtime/metal/command_queue.{h,cpp}` existe como skeleton cross-platform e ja registra dispatches de kernels `matmul`, `softmax` e `rmsnorm`.
+- `runtime/metal/kernel_library.{h,cpp}` e `runtime/metal/kernels/*.metal` agora versionam o catalogo de kernels Metal dentro do repo.
 - `runtime/mlx/mlx_bridge.{h,cpp}` existe como skeleton cross-platform e ja registra build/eval de um dense plan sobre allocation compartilhada.
 - `RuntimeContext` agora expoe `metalQueue()` e `mlxBridge()`, e `UnifiedAllocator` diferencia `cpu-only` de `unified-shared`.
 - O smoke test nativo e o contract runner cobrem essa infraestrutura nova sem depender de GTest.

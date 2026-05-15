@@ -1,5 +1,7 @@
 #include "metal/command_queue.h"
 
+#include "metal/kernel_library.h"
+
 namespace us4 {
 
 std::string_view ToString(const MetalKernelKind kernel) {
@@ -30,8 +32,16 @@ bool MetalCommandQueue::Dispatch(const MetalKernelKind kernel,
     return false;
   }
 
+  const MetalKernelDescriptor* descriptor = FindMetalKernel(kernel);
+  if (descriptor == nullptr) {
+    reason_ = "metal-kernel-missing";
+    return false;
+  }
+
   dispatches_.push_back(MetalDispatchRecord{
       .kernel = kernel,
+      .entryPoint = descriptor->entryPoint,
+      .relativePath = descriptor->relativePath,
       .threadgroups = threadgroups,
       .threadsPerGroup = threadsPerGroup,
       .usesSharedAllocation = allocation != nullptr && allocation->gpuVisible,
