@@ -12,6 +12,7 @@
 #include "core/backend_selector.h"
 #include "core/model_asset.h"
 #include "core/runtime_context.h"
+#include "cpu/scalar_matmul.h"
 #include "kv/kv_pager.h"
 #include "kv/prefix_cache.h"
 #include "kv/summarizer.h"
@@ -469,6 +470,31 @@ int main() {
     const float *matmulValues = matmulOut.DataAsFloat32();
     ok &= Expect(matmulValues != nullptr && matmulValues[6] == 23.0F,
                  "neon matmul should preserve expected fp32 result");
+
+    us4::Tensor tailLhs({3, 7}, us4::DType::kFloat32, us4::DeviceType::kCpu);
+    us4::Tensor tailRhs({7, 6}, us4::DType::kFloat32, us4::DeviceType::kCpu);
+    us4::Tensor tailNeon({3, 6}, us4::DType::kFloat32, us4::DeviceType::kCpu);
+    us4::Tensor tailScalar({3, 6}, us4::DType::kFloat32, us4::DeviceType::kCpu);
+    float *tailLhsData = tailLhs.MutableDataAsFloat32();
+    float *tailRhsData = tailRhs.MutableDataAsFloat32();
+    for (std::size_t index = 0; index < 21U; ++index) {
+      tailLhsData[index] = static_cast<float>((index % 5U) - 2U);
+    }
+    for (std::size_t index = 0; index < 42U; ++index) {
+      tailRhsData[index] = static_cast<float>((index % 7U) - 3U) * 0.5F;
+    }
+    ok &= Expect(us4::NeonMatmul(tailLhs, tailRhs, tailNeon, nullptr),
+                 "neon matmul should handle tail columns");
+    ok &= Expect(us4::ScalarMatmul(tailLhs, tailRhs, tailScalar, nullptr),
+                 "scalar matmul should provide tail-column reference");
+    const float *tailNeonValues = tailNeon.DataAsFloat32();
+    const float *tailScalarValues = tailScalar.DataAsFloat32();
+    bool tailMatches = tailNeonValues != nullptr && tailScalarValues != nullptr;
+    for (std::size_t index = 0; tailMatches && index < 18U; ++index) {
+      tailMatches = tailNeonValues[index] == tailScalarValues[index];
+    }
+    ok &= Expect(tailMatches,
+                 "neon matmul should match scalar results for tail columns");
 
     us4::Tensor int8Weights({4}, us4::DType::kInt8, us4::DeviceType::kCpu);
     us4::Tensor int8Output({4}, us4::DType::kFloat32, us4::DeviceType::kCpu);

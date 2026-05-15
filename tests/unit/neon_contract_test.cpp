@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include "cpu/scalar_matmul.h"
 #include "neon/kernel_profile.h"
 #include "neon/neon_matmul.h"
 
@@ -115,4 +116,32 @@ TEST(NeonContractTest, NeonMatmulMatchesScalarResultForFp32) {
   EXPECT_FLOAT_EQ(values[5], 11.0F);
   EXPECT_FLOAT_EQ(values[6], 23.0F);
   EXPECT_FLOAT_EQ(values[7], 16.0F);
+}
+
+TEST(NeonContractTest, NeonMatmulMatchesScalarResultForTailColumns) {
+  us4::Tensor lhs({3, 7}, us4::DType::kFloat32, us4::DeviceType::kCpu);
+  us4::Tensor rhs({7, 6}, us4::DType::kFloat32, us4::DeviceType::kCpu);
+  us4::Tensor neonOutput({3, 6}, us4::DType::kFloat32, us4::DeviceType::kCpu);
+  us4::Tensor scalarOutput({3, 6}, us4::DType::kFloat32, us4::DeviceType::kCpu);
+
+  float *lhsData = lhs.MutableDataAsFloat32();
+  float *rhsData = rhs.MutableDataAsFloat32();
+  for (std::size_t index = 0; index < 21U; ++index) {
+    lhsData[index] = static_cast<float>((index % 5U) - 2U);
+  }
+  for (std::size_t index = 0; index < 42U; ++index) {
+    rhsData[index] = static_cast<float>((index % 7U) - 3U) * 0.5F;
+  }
+
+  std::string error;
+  ASSERT_TRUE(us4::NeonMatmul(lhs, rhs, neonOutput, &error)) << error;
+  ASSERT_TRUE(us4::ScalarMatmul(lhs, rhs, scalarOutput, &error)) << error;
+
+  const float *neonValues = neonOutput.DataAsFloat32();
+  const float *scalarValues = scalarOutput.DataAsFloat32();
+  ASSERT_NE(neonValues, nullptr);
+  ASSERT_NE(scalarValues, nullptr);
+  for (std::size_t index = 0; index < 18U; ++index) {
+    EXPECT_FLOAT_EQ(neonValues[index], scalarValues[index]) << index;
+  }
 }
