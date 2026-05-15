@@ -130,6 +130,79 @@ TEST(AdapterGenerationContractTest,
   EXPECT_EQ(result.generatedTokens.size(), 3U);
 }
 
+TEST(AdapterGenerationContractTest,
+     LlamaDirectoryManifestKeepsFixturePromptAndNeonContractVisible) {
+  const us4::IUS4V6Adapter *adapter = us4::FindAdapterByModel("llama-3.1-8b");
+  ASSERT_NE(adapter, nullptr);
+
+  us4::ModelAsset asset;
+  std::string error;
+  const std::filesystem::path manifestDirectory =
+      RepoRoot() / "tests" / "fixtures" / "models" / "llama-3.1-8b";
+  ASSERT_TRUE(us4::LoadModelAsset(manifestDirectory, asset, &error)) << error;
+
+  us4::RuntimeContext context(MakeProbe());
+  adapter->ConfigureRuntime(context);
+
+  const us4::GenerationResult result = adapter->Generate(
+      {.prompt = "", .maxTokens = 3, .asset = &asset}, context);
+
+  ASSERT_EQ(result.promptTokens.size(), 1U);
+  EXPECT_EQ(result.promptTokens[0], "hello");
+  EXPECT_EQ(result.family, "llama");
+  EXPECT_EQ(result.modelName, "llama-3.1-8b-fixture");
+  EXPECT_EQ(result.assetFormat, "fixture-manifest");
+  EXPECT_EQ(std::filesystem::path(result.assetPath).filename(),
+            "model.us4manifest");
+  EXPECT_EQ(result.backend, "neon");
+  EXPECT_EQ(result.backendReason, "auto-neon");
+  EXPECT_FALSE(result.fellBack);
+  EXPECT_EQ(result.weightDType, "fp16");
+  EXPECT_EQ(result.neonKernelFlavor, "fp16-lane8");
+  EXPECT_EQ(result.dequantPath, "none");
+  EXPECT_EQ(result.generatedTokens.size(), 3U);
+}
+
+TEST(AdapterGenerationContractTest,
+     LlamaGgufAssetSurfacesLoaderAndFallbackTelemetry) {
+  const us4::IUS4V6Adapter *adapter = us4::FindAdapterByModel("llama-3.1-8b");
+  ASSERT_NE(adapter, nullptr);
+
+  us4::ModelAsset asset;
+  std::string error;
+  const std::filesystem::path ggufPath = RepoRoot() / "tests" / "fixtures" /
+                                         "models" / "llama-3.1-8b" /
+                                         "toy-llama.gguf";
+  ASSERT_TRUE(us4::LoadModelAsset(ggufPath, asset, &error)) << error;
+
+  us4::RuntimeContext context(MakeProbe());
+  adapter->ConfigureRuntime(context);
+
+  const us4::GenerationResult result =
+      adapter->Generate({.prompt = "hello",
+                         .maxTokens = 4,
+                         .asset = &asset,
+                         .requestedBackend = us4::BackendType::kMetal},
+                        context);
+
+  EXPECT_EQ(result.family, "llama");
+  EXPECT_EQ(result.modelName, "toy-llama");
+  EXPECT_EQ(result.assetFormat, "gguf");
+  EXPECT_EQ(result.assetPath, ggufPath.string());
+  EXPECT_EQ(result.backend, "neon");
+  EXPECT_EQ(result.backendReason, "requested-backend-unavailable");
+  EXPECT_TRUE(result.fellBack);
+  EXPECT_EQ(result.sharedAllocations, 0U);
+  EXPECT_EQ(result.metalDispatches, 0U);
+  EXPECT_FALSE(result.mlxPlanBuilt);
+  EXPECT_EQ(result.weightDType, "fp16");
+  EXPECT_EQ(result.neonKernelFlavor, "fp16-lane8");
+  EXPECT_EQ(result.dequantPath, "none");
+  ASSERT_EQ(result.promptTokens.size(), 1U);
+  EXPECT_EQ(result.promptTokens[0], "hello");
+  EXPECT_EQ(result.generatedTokens.size(), 4U);
+}
+
 TEST(AdapterGenerationContractTest, LowBitAssetsSurfaceNeonDequantIntent) {
   const us4::IUS4V6Adapter *bitnet = us4::FindAdapterByModel("bitnet-b1.58-2b");
   const us4::IUS4V6Adapter *ternary =

@@ -15,6 +15,9 @@ ahead of us.
   runtime context, and backend selection
 - `adapters/` contains a native registry plus scaffold adapters for Qwen,
   Gemma, BitNet, ternary, Llama, DeepSeek MoE, and Kimi MoE
+- `tests/fixtures/models/llama-3.1-8b/` now carries both a fixture manifest
+  directory and a toy GGUF payload so unit/E2E coverage can exercise the Llama
+  loader contract before real weights land
 - `metal/` now contains a cross-platform command queue skeleton used by native
   contracts
 - `mlx/` now contains a cross-platform bridge skeleton used by native
@@ -39,6 +42,9 @@ ahead of us.
 - `us4-cli list-models` exposes the native adapter registry
 - `run --model-path ...` can load fixture manifests and detect GGUF /
   Safetensors file types without external libraries
+- the native CLI contract can already resolve the Llama fixture directory or
+  toy GGUF path and surface backend/fallback telemetry without pretending that
+  real Llama weights are loaded yet
 - backend selection and fallback are explicit in CLI output
 - the backend contract already accepts `scalar`, `neon`, `mlx`, `metal`, and
   `ane`, with automatic fallback when a requested path is unavailable
@@ -109,6 +115,21 @@ real inference yet.
 Requesting `--backend metal`, `--backend mlx`, or `--backend neon` currently
 validates selection and reporting behavior; it does not prove that generation is
 already running on those accelerated paths.
+
+## Llama vertical evidence today
+
+The repo now keeps an explicit pre-vertical contract for Llama in tests and
+fixtures:
+
+- `tests/unit/adapter_generation_contract_test.cpp` covers directory-manifest
+  loading, default prompt fallback, GGUF routing, and requested-backend
+  fallback telemetry for the Llama fixture assets;
+- `tests/e2e/us4-cli.spec.ts` covers native CLI execution against both the
+  `llama-3.1-8b/` manifest directory and `toy-llama.gguf`, including host-aware
+  assertions for `metal` request behavior;
+- these checks are evidence that adapter selection, asset detection, and
+  observability stay intact while the real Sprint 07 forward path is still
+  under construction.
 
 ## Transition rule
 

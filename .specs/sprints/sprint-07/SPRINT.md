@@ -30,6 +30,21 @@ Adapter Llama 3/4 com GQA, RoPE scaling (linear/dynamic/YaRN), ALiBi opcional. F
 - E2E: Llama 3 8B Q4 em M3 Max gera 200 tokens em <= 30s.
 - Correctness: diff vs HF reference <= 1e-3 nos primeiros 64 tokens.
 
+## Contract prep before implementation
+- Unit contract should keep Llama fixture coverage for:
+  - manifest directory loading without explicit `--model`
+  - default prompt token fallback from `model.us4manifest`
+  - GGUF asset detection and family/model routing
+  - requested backend fallback telemetry when `metal` is unavailable
+- Native E2E should keep host-aware Llama evidence for both:
+  - `tests/fixtures/models/llama-3.1-8b/`
+  - `tests/fixtures/models/llama-3.1-8b/toy-llama.gguf`
+- Bench evidence for T07.6 should record at minimum:
+  - requested backend, observed backend, and fallback reason
+  - runtime mode and hardware profile
+  - generated token count, elapsed time, and text fingerprint
+  - correctness delta once the HF reference path exists
+
 ## DoD
 - Llama 3 + 4 funcionando em FULL/BALANCED_PLUS/DEGRADED.
 - Coverage >=80% em `runtime/adapters/llama`.
