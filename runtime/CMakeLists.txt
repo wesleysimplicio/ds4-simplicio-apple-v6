@@ -19,6 +19,7 @@ add_library(us4_runtime_core
   adapters/llama/llama_config.cpp
   adapters/llama/llama_adapter.cpp
   adapters/ternary/ternary_adapter.cpp
+  kv/eviction_policy.cpp
   kv/kv_pager.cpp
   kv/prefix_cache.cpp
   kv/ssd_cold_store.cpp
@@ -33,6 +34,7 @@ add_library(us4_runtime_core
   mlx/mlx_bridge.cpp
   moe/expert_pager.cpp
   moe/router.cpp
+  neon/block_gemm.cpp
   neon/dequant_int4.cpp
   neon/dequant_int8.cpp
   neon/neon_attention.cpp
