@@ -35,6 +35,7 @@ add_library(us4_runtime_core
   mlx/mlx_bridge.cpp
   moe/expert_pager.cpp
   moe/router.cpp
+  moe/speculative_prefetch.cpp
   neon/dequant_int4.cpp
   neon/dequant_int8.cpp
   neon/neon_attention.cpp

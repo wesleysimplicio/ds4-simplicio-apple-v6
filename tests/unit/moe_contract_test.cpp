@@ -2,6 +2,7 @@
 
 #include "moe/expert_pager.h"
 #include "moe/router.h"
+#include "moe/speculative_prefetch.h"
 
 TEST(MoeContractTest, RouterReturnsScoresSortedByTopK) {
   us4::Router router;
@@ -82,4 +83,46 @@ TEST(MoeContractTest, ExpertPagerSnapshotKeepsVisibleResidentState) {
   ASSERT_EQ(snapshot.residents.size(), 2U);
   EXPECT_EQ(snapshot.residents[0], "expert-a");
   EXPECT_EQ(snapshot.residents[1], "expert-b");
+}
+
+TEST(MoeContractTest, SpeculativePrefetchBuildsFamilyScopedPrefetchPlan) {
+  us4::Router router;
+  const us4::RouterDecision prediction =
+      router.RouteTopK({1.2F, 0.9F, 0.6F, 0.3F}, 3);
+  us4::SpeculativePrefetch prefetch(3);
+
+  const us4::SpeculativePrefetchPlan plan =
+      prefetch.BuildPlan("glm", prediction);
+
+  ASSERT_EQ(plan.prefetchedExperts.size(), 3U);
+  EXPECT_EQ(plan.prefetchedExperts[0], prediction.selected[0].expert);
+  EXPECT_EQ(plan.prefetchedKeys[0], "glm-expert-0");
+  EXPECT_EQ(plan.prefetchedKeys[1], "glm-expert-1");
+  EXPECT_EQ(plan.prefetchedKeys[2], "glm-expert-2");
+}
+
+TEST(MoeContractTest,
+     SpeculativePrefetchReconcileForbidsWrongExpertLeakAndExposesHitRatio) {
+  us4::Router router;
+  const us4::RouterDecision prediction =
+      router.RouteTopK({1.2F, 1.0F, 0.8F, 0.4F}, 3);
+  const us4::RouterDecision actual =
+      router.RouteTopK({1.1F, 0.2F, 0.9F, 0.8F}, 2);
+  us4::SpeculativePrefetch prefetch(3);
+
+  const us4::SpeculativePrefetchPlan plan =
+      prefetch.BuildPlan("deepseek", prediction);
+  const us4::SpeculativePrefetchTelemetry telemetry =
+      prefetch.Reconcile(plan, actual);
+
+  EXPECT_EQ(telemetry.prefetchedCount, 3U);
+  EXPECT_EQ(telemetry.hitCount, 2U);
+  EXPECT_EQ(telemetry.missCount, 1U);
+  EXPECT_DOUBLE_EQ(telemetry.hitRatio, 2.0 / 3.0);
+  EXPECT_TRUE(telemetry.wrongExpertLeakPrevented);
+  ASSERT_EQ(telemetry.executableExperts.size(), 2U);
+  EXPECT_EQ(telemetry.executableExperts[0], actual.selected[0].expert);
+  EXPECT_EQ(telemetry.executableExperts[1], actual.selected[1].expert);
+  EXPECT_NE(telemetry.executableExperts[0], 1U);
+  EXPECT_NE(telemetry.executableExperts[1], 1U);
 }

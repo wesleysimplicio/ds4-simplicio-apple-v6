@@ -23,6 +23,15 @@ Home de routing, paging e telemetria agregada para adapters sparse.
   fusao e contexto amplo.
 - `GlmMoEAdapter` adiciona a assinatura `glm-route eX eY`, com heuristicas
   focadas em tools, reasoning, codigo e contexto longo para a frente GLM.
+- `SpeculativePrefetch` agora modela o contrato de prefetch breadth-first para
+  experts previstos, com reconciliacao explicita contra a rota real para
+  garantir que experts prefetch-only nunca vazem para execucao.
+- A telemetria minima desse contrato ja preserva:
+  - `prefetchedCount`
+  - `hitCount`
+  - `missCount`
+  - `hitRatio`
+  - `wrongExpertLeakPrevented`
 - O contrato de loader agora preserva tambem:
   - `moe_shard_count`
   - `moe_active_experts`
