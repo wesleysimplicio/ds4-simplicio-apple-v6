@@ -34,6 +34,7 @@
 #include "mlx/mlx_bridge.h"
 #include "moe/expert_pager.h"
 #include "moe/router.h"
+#include "moe/speculative_prefetch.h"
 #include "neon/dequant_int4.h"
 #include "neon/dequant_int8.h"
 #include "neon/kernel_profile.h"
@@ -1182,6 +1183,36 @@ int main() {
     const float *int4Values = int4Output.DataAsFloat32();
     ok &= Expect(int4Values != nullptr && int4Values[7] == -2.0F,
                  "neon int4 dequant should preserve tail values");
+  }
+
+  {
+    us4::Router router;
+    const us4::RouterDecision prediction =
+        router.RouteTopK({1.2F, 1.0F, 0.8F, 0.4F}, 3);
+    const us4::RouterDecision actual =
+        router.RouteTopK({1.1F, 0.2F, 0.9F, 0.8F}, 2);
+    const us4::SpeculativePrefetch prefetch(3);
+    const us4::SpeculativePrefetchPlan plan =
+        prefetch.BuildPlan("glm", prediction);
+    const us4::SpeculativePrefetchTelemetry telemetry =
+        prefetch.Reconcile(plan, actual);
+
+    ok &= Expect(plan.prefetchedExperts.size() == 3U,
+                 "speculative prefetch should keep top-3 prediction breadth");
+    ok &= Expect(plan.prefetchedKeys.front() == "glm-expert-0",
+                 "speculative prefetch should keep family-scoped keys");
+    ok &= Expect(telemetry.prefetchedCount == 3U && telemetry.hitCount == 2U &&
+                     telemetry.missCount == 1U,
+                 "speculative prefetch should expose hit and miss counts");
+    ok &= Expect(std::abs(telemetry.hitRatio - (2.0 / 3.0)) <= 1e-9,
+                 "speculative prefetch should expose stable hit ratio");
+    ok &= Expect(telemetry.wrongExpertLeakPrevented,
+                 "speculative prefetch should forbid wrong-expert leakage");
+    ok &= Expect(
+        telemetry.executableExperts.size() == 2U &&
+            telemetry.executableExperts[0] == actual.selected[0].expert &&
+            telemetry.executableExperts[1] == actual.selected[1].expert,
+        "speculative prefetch should execute only actual route experts");
   }
 
   return ok ? EXIT_SUCCESS : EXIT_FAILURE;

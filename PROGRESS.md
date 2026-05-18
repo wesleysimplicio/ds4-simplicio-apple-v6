@@ -133,6 +133,26 @@ Validation:
 Next:
 Fechar PR/merge de T09.2 e seguir para T09.3 (speculative prefetch).
 
+### Checkpoint 7
+
+Status: in_progress
+
+Task:
+T09.3 - Build speculative expert prefetch
+
+Result:
+`SpeculativePrefetch` entrou em `runtime/moe` com plano de prefetch por familia,
+reconciliacao com a rota real, `hitRatio` estavel e garantia contratual de
+`wrongExpertLeakPrevented`.
+
+Validation:
+`clang-format --dry-run --Werror`; `clang-tidy -p build runtime/moe/speculative_prefetch.cpp`;
+`cmake --build build --config Release`; `ctest --test-dir build --output-on-failure -C Release`;
+`npm run lint`; `npm test -- --coverage`; `npm run pack:dry`
+
+Next:
+Fechar PR/merge de T09.3 e seguir para T09.4 (sparsity-aware cache).
+
 ## Blockers
 
 Nenhum bloqueio funcional. O ambiente local continua sem GTest instalado, entao
