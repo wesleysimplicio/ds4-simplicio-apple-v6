@@ -34,7 +34,10 @@ add_library(us4_runtime_core
   mlx/dense_plan.cpp
   mlx/mlx_bridge.cpp
   moe/expert_pager.cpp
+  moe/moe_telemetry.cpp
   moe/router.cpp
+  moe/router_metrics.cpp
+  moe/shard_loader.cpp
   neon/bitnet_matmul.cpp
   neon/block_gemm.cpp
   neon/dequant_int4.cpp

@@ -1,6 +1,6 @@
 ---
 sprint: sprint-08
-status: todo
+status: done
 start: 2026-08-20
 end: 2026-09-02
 owner: us4-core
@@ -17,12 +17,12 @@ MoE: DeepSeek + Kimi adapters. Expert pager (carrega experts on-demand). Top-k r
 - Lazy load por expert, experts roteados de verdade, telemetria e metas de corretude ainda pertencem ao escopo futuro deste sprint.
 
 ## Tasks
-- [ ] T08.1 — `runtime/moe/Router` (top-k softmax, expert selection, load balance)
-- [ ] T08.2 — `runtime/moe/ExpertPager` (page experts em unified memory, evict LRU)
-- [ ] T08.3 — `runtime/adapters/deepseek/DeepSeekMoEAdapter` (config, shared experts, routed experts)
-- [ ] T08.4 — `runtime/adapters/kimi/KimiMoEAdapter`
-- [ ] T08.5 — Loader MoE: lazy load por expert (sharded weights)
-- [ ] T08.6 — Telemetry: expert hit-rate, eviction count, router entropy
+- [x] T08.1 — `runtime/moe/Router` (top-k softmax, expert selection, load balance)
+- [x] T08.2 — `runtime/moe/ExpertPager` (page experts em unified memory, evict LRU)
+- [x] T08.3 — `runtime/adapters/deepseek/DeepSeekMoEAdapter` (config, shared experts, routed experts)
+- [x] T08.4 — `runtime/adapters/kimi/KimiMoEAdapter`
+- [x] T08.5 — Loader MoE: lazy load por expert (sharded weights)
+- [x] T08.6 — Telemetry: expert hit-rate, eviction count, router entropy
 
 ## Test plan
 - Unit: router top-k correctness; pager evict re-load; load balance loss.

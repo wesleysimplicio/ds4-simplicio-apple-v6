@@ -16,6 +16,7 @@ set(us4_runtime_contract_test_sources
   kv_contract_test.cpp
   eviction_policy_contract_test.cpp
   moe_contract_test.cpp
+  moe_extended_contract_test.cpp
   neon_dequant_contract_test.cpp
   neon_contract_test.cpp
   block_gemm_contract_test.cpp
