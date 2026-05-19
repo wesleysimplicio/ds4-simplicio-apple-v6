@@ -120,6 +120,18 @@ RunCase(const us4::HardwareProbeResult &probe, const std::string_view label,
   std::cout << "weight_dtype=" << observation.weightDType << "\n";
   std::cout << "neon_kernel_flavor=" << observation.neonKernelFlavor << "\n";
   std::cout << "dequant_path=" << observation.dequantPath << "\n";
+  std::cout << "mixed_dispatch_strategy=" << result.mixedDispatchStrategy
+            << "\n";
+  std::cout << "mixed_dispatch_metal_stages=" << result.mixedDispatchMetalStages
+            << "\n";
+  std::cout << "mixed_dispatch_ane_stages=" << result.mixedDispatchAneStages
+            << "\n";
+  std::cout << "ane_compiled_layers=" << result.aneCompiledLayers << "\n";
+  std::cout << "ane_prediction_calls=" << result.anePredictionCalls << "\n";
+  std::cout << "thermal_pressure_level=" << result.thermalPressureLevel << "\n";
+  std::cout << "thermal_reason=" << result.thermalReason << "\n";
+  std::cout << "thermal_downgraded="
+            << (result.thermalDowngraded ? "true" : "false") << "\n";
   if (result.moeSelectedExperts > 0 || result.moeShardCount > 0) {
     std::cout << "moe_hit_rate=" << ComputeMoeHitRate(result) << "\n";
     std::cout << "moe_eviction_rate=" << ComputeMoeEvictionRate(result) << "\n";
@@ -206,6 +218,11 @@ int main() {
            .has_value()) {
     return 1;
   }
+  if (!RunCase(probe, "dense-qwen/ane-requested", "qwen-0.5b", std::nullopt,
+               us4::BackendType::kAne)
+           .has_value()) {
+    return 1;
+  }
   if (!RunCase(probe, "dense-gemma/scalar-requested", "gemma-2b-it",
                std::nullopt, us4::BackendType::kScalarCpu)
            .has_value()) {
@@ -230,6 +247,13 @@ int main() {
     return 1;
   }
   PrintCorrectnessPlaceholder("llama-fixture/metal-requested");
+
+  if (!RunCase(probe, "llama-fixture/ane-requested", "llama-3.1-8b",
+               llamaFixtureAsset, us4::BackendType::kAne)
+           .has_value()) {
+    return 1;
+  }
+  PrintCorrectnessPlaceholder("llama-fixture/ane-requested");
 
   const std::optional<us4::ModelAsset> llamaGgufAsset =
       LoadOptionalAsset(repoRoot / "tests" / "fixtures" / "models" /

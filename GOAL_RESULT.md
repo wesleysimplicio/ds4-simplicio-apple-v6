@@ -2,6 +2,13 @@
 
 ## Summary
 
+T11.5 foi concluida. A evidencia de benchmark ANE foi ampliada no
+`dense_baseline`: os casos `ane-requested` para Qwen e Llama ficam visiveis e
+cada caso passa a registrar mixed-dispatch, contadores ANE e estado termico. Em
+host nao-M5, a saida esperada e fallback observavel.
+
+## Previous Summary
+
 T11.3 e T11.4 foram concluidas. O runtime agora tem um coordenador explicito
 de mixed dispatch entre Metal e ANE, alem de um `ThermalMonitor` que aplica
 downgrade de modo sob pressao termica derivada do probe. O estado nativo e o
@@ -45,6 +52,7 @@ build\runtime\benchmarks\dense_baseline.exe
 ## Remaining Risks
 
 - T11.5-T11.6 ainda seguem pendentes no planejamento local.
+- T11.6 ainda segue pendente no planejamento local.
 - A fonte termica atual e `probe-derived`; leitura real de IOPMrootDomain/powermetrics fica como aprofundamento Apple-host.
 
 ## Suggested PR Title

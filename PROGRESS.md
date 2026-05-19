@@ -364,6 +364,31 @@ Nenhum bloqueio funcional. O ambiente local continua sem GTest instalado, entao
 os gates nativos seguem por `us4_runtime_smoke_test` e
 `us4_runtime_contract_runner`.
 
+### Checkpoint 11
+
+Status: in_progress
+
+Task:
+T11.5 - Add ane benchmark evidence
+
+Result:
+`dense_baseline` agora inclui casos `ane-requested` para Qwen e Llama fixture,
+alem de emitir estrategia mixed-dispatch, contadores ANE e sinais termicos por
+caso. Em hosts sem M5+, a evidencia valida e fallback explicito, nao numero
+sintetico.
+
+Validation:
+`clang-format --dry-run --Werror runtime\\benchmarks\\dense_baseline.cpp`;
+`clang-tidy -p build runtime\\benchmarks\\dense_baseline.cpp`;
+`cmake --build build --config Release`;
+`ctest --test-dir build --output-on-failure -C Release`;
+`npm run lint`; `npm test -- --coverage`; `npm run pack:dry`;
+`npx playwright test --reporter=list,html tests/e2e/us4-cli.spec.ts`;
+`build\\runtime\\benchmarks\\dense_baseline.exe`
+
+Next:
+Fechar issue #68 e seguir para T11.6.
+
 ## Validation History
 
 | Command | Result | Notes |
