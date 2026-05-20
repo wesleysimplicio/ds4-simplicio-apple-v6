@@ -21,18 +21,18 @@ esconder fallback.
 
 ## Changed Files
 
-- C:\Users\wesley.simplicio\Pictures\m\us4-v6-simplicio-apple\runtime\ane\mixed_dispatch.h
-- C:\Users\wesley.simplicio\Pictures\m\us4-v6-simplicio-apple\runtime\ane\mixed_dispatch.cpp
-- C:\Users\wesley.simplicio\Pictures\m\us4-v6-simplicio-apple\runtime\adapters\dense_adapter_base.cpp
-- C:\Users\wesley.simplicio\Pictures\m\us4-v6-simplicio-apple\runtime\core\runtime_context.h
-- C:\Users\wesley.simplicio\Pictures\m\us4-v6-simplicio-apple\runtime\core\runtime_context.cpp
-- C:\Users\wesley.simplicio\Pictures\m\us4-v6-simplicio-apple\runtime\core\ius4v6_adapter.h
-- C:\Users\wesley.simplicio\Pictures\m\us4-v6-simplicio-apple\apps\cli\main.cpp
-- C:\Users\wesley.simplicio\Pictures\m\us4-v6-simplicio-apple\tests\unit\runtime_acceleration_contract_test.cpp
-- C:\Users\wesley.simplicio\Pictures\m\us4-v6-simplicio-apple\tests\unit\runtime_contract_runner.cpp
-- C:\Users\wesley.simplicio\Pictures\m\us4-v6-simplicio-apple\runtime\tuning\thermal_monitor.h
-- C:\Users\wesley.simplicio\Pictures\m\us4-v6-simplicio-apple\runtime\tuning\thermal_monitor.cpp
-- C:\Users\wesley.simplicio\Pictures\m\us4-v6-simplicio-apple\runtime\tuning\README.md
+- runtime/ane/mixed_dispatch.h
+- runtime/ane/mixed_dispatch.cpp
+- runtime/adapters/dense_adapter_base.cpp
+- runtime/core/runtime_context.h
+- runtime/core/runtime_context.cpp
+- runtime/core/ius4v6_adapter.h
+- apps/cli/main.cpp
+- tests/unit/runtime_acceleration_contract_test.cpp
+- tests/unit/runtime_contract_runner.cpp
+- runtime/tuning/thermal_monitor.h
+- runtime/tuning/thermal_monitor.cpp
+- runtime/tuning/README.md
 
 ## Validation Commands
 

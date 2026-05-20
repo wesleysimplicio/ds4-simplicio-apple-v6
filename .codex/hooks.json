@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "if [[ \"$CLAUDE_BASH_COMMAND\" == *\"git commit\"* ]]; then 'C:\\Users\\wesley.simplicio\\Pictures\\m\\us4-v6-simplicio-windows\\.codex\\hooks\\pre-commit.sh'; fi"
+            "command": "if [[ \"$CLAUDE_BASH_COMMAND\" == *\"git commit\"* ]]; then '.codex/hooks/pre-commit.sh'; fi"
           }
         ]
       }
@@ -17,7 +17,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "'C:\\Users\\wesley.simplicio\\Pictures\\m\\us4-v6-simplicio-windows\\.codex\\hooks\\post-edit.sh' \"$CLAUDE_FILE_PATH\""
+            "command": "'.codex/hooks/post-edit.sh' \"$CLAUDE_FILE_PATH\""
           }
         ]
       }
@@ -28,7 +28,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "'C:\\Users\\wesley.simplicio\\Pictures\\m\\us4-v6-simplicio-windows\\.codex\\hooks\\session-start-skills.sh'"
+            "command": "'.codex/hooks/session-start-skills.sh'"
           }
         ]
       }

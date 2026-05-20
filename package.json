@@ -49,11 +49,7 @@
     "tdd",
     "ddd"
   ],
-  "author": {
-    "name": "Wesley Simplicio",
-    "email": "wesleybob4@gmail.com",
-    "url": "https://github.com/wesleysimplicio"
-  },
+  "author": "Wesley Simplicio",
   "license": "MIT",
   "homepage": "https://github.com/wesleysimplicio/llm-project-mapper#readme",
   "repository": {

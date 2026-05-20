@@ -224,8 +224,8 @@ All technical work is expected to follow the loop:
 
 Details:
 
-- [C:\Users\wesley.simplicio\Pictures\m\us4-v6-simplicio-apple\.specs\sprints\BACKLOG.md](C:/Users/wesley.simplicio/Pictures/m/us4-v6-simplicio-apple/.specs/sprints/BACKLOG.md)
-- [C:\Users\wesley.simplicio\Pictures\m\us4-v6-simplicio-apple\.specs\sprints\TIMELINE.md](C:/Users/wesley.simplicio/Pictures/m/us4-v6-simplicio-apple/.specs/sprints/TIMELINE.md)
+- [.specs/sprints/BACKLOG.md](.specs/sprints/BACKLOG.md)
+- [.specs/sprints/TIMELINE.md](.specs/sprints/TIMELINE.md)
 
 ## Repo layout today
 

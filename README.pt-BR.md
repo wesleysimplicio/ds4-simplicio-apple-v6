@@ -222,8 +222,8 @@ Todo trabalho tecnico deve seguir o loop:
 
 Detalhes:
 
-- [C:\Users\wesley.simplicio\Pictures\m\us4-v6-simplicio-apple\.specs\sprints\BACKLOG.md](C:/Users/wesley.simplicio/Pictures/m/us4-v6-simplicio-apple/.specs/sprints/BACKLOG.md)
-- [C:\Users\wesley.simplicio\Pictures\m\us4-v6-simplicio-apple\.specs\sprints\TIMELINE.md](C:/Users/wesley.simplicio/Pictures/m/us4-v6-simplicio-apple/.specs/sprints/TIMELINE.md)
+- [.specs/sprints/BACKLOG.md](.specs/sprints/BACKLOG.md)
+- [.specs/sprints/TIMELINE.md](.specs/sprints/TIMELINE.md)
 
 ## Layout do repo hoje
 
