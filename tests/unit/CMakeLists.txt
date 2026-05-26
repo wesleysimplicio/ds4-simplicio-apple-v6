@@ -67,13 +67,14 @@ target_include_directories(us4_runtime_contract_runner
 
 add_test(NAME us4_runtime_contract_runner COMMAND us4_runtime_contract_runner)
 
-find_package(GTest CONFIG QUIET)
-
-if(NOT GTest_FOUND)
-  find_package(GTest QUIET)
+if(NOT TARGET GTest::gtest_main)
+  find_package(GTest CONFIG QUIET)
+  if(NOT GTest_FOUND)
+    find_package(GTest QUIET)
+  endif()
 endif()
 
-if(GTest_FOUND)
+if(TARGET GTest::gtest_main)
   include(GoogleTest)
 
   add_executable(us4_runtime_contract_tests
