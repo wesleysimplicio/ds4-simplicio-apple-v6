@@ -189,9 +189,18 @@ jobs:
           ./build/runtime/benchmarks/dense_baseline \
             | tee dod-artifacts/runtime-native/dense_baseline.log
           grep -q '^benchmark=dense_baseline$' dod-artifacts/runtime-native/dense_baseline.log
-          grep -q '^case=dense-default$' dod-artifacts/runtime-native/dense_baseline.log
-          grep -q '^case=lowbit-int8$' dod-artifacts/runtime-native/dense_baseline.log
-          grep -q '^case=lowbit-int4$' dod-artifacts/runtime-native/dense_baseline.log
+          grep -q '^case=dense-default/auto$' dod-artifacts/runtime-native/dense_baseline.log
+          grep -q '^compare_case=lowbit-int8$' dod-artifacts/runtime-native/dense_baseline.log
+          grep -q '^compare_case=lowbit-int4$' dod-artifacts/runtime-native/dense_baseline.log
+
+      - name: Run native correctness gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./build/runtime/benchmarks/correctness/correctness_check \
+            | tee dod-artifacts/runtime-native/correctness.log
+          grep -q '^benchmark=correctness$' dod-artifacts/runtime-native/correctness.log
+          grep -q '^correctness_status=pass$' dod-artifacts/runtime-native/correctness.log
 
       - name: Run direct native CLI contract checks
         shell: bash
