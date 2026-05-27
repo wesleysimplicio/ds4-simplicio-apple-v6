@@ -4,6 +4,20 @@ All notable changes to **US4 V6 Apple Edition** are recorded here. Format
 follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the
 project adopts [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.1] - 2026-05-27
+
+### Fixed
+
+- `POST /v1/embeddings` returned 500 `embedding failed` with the default
+  `embeddinggemma-300m-bf16` model. Root cause: `mlx-embeddings 0.1.0` ships a
+  `generate()` helper that calls `model(**inputs)` with key `input_ids`, but
+  the `gemma3_text` model class expects `inputs=`. Replaced the helper call in
+  `EmbeddingsBackend.embed` with explicit tokenization and a signature-aware
+  dispatch (`inputs=` first, fall back to `input_ids=` on `TypeError`) so the
+  backend stays model-agnostic across BERT-, Gemma3-, Qwen3-, and ModernBERT-
+  style embedders. Smoke: `/v1/embeddings` returns 768-dim vectors for the
+  default model; serve E2E suite still 5/5.
+
 ## [0.2.0] - 2026-05-27
 
 ### Added

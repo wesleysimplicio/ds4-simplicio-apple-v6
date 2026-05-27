@@ -121,11 +121,25 @@ class EmbeddingsBackend:
 
     def embed(self, texts: list[str]) -> list[list[float]]:
         self.ensure_loaded()
-        from mlx_embeddings import generate as _generate
-
-        output = _generate(self._model, self._tokenizer, texts)
-        embeddings = self._extract_vectors(output)
-        return embeddings
+        # mlx-embeddings 0.1.0 ships a `generate()` helper that calls
+        # `model(**inputs)` with keys `input_ids` / `attention_mask`. Some model
+        # classes (gemma3_text, others) expect `inputs=` instead, raising
+        # TypeError. Tokenize here and dispatch with the signature the loaded
+        # model accepts so the backend stays model-agnostic.
+        batch = self._tokenizer(
+            texts,
+            return_tensors="mlx",
+            padding=True,
+            truncation=True,
+            max_length=512,
+        )
+        ids = batch["input_ids"]
+        attention_mask = batch.get("attention_mask")
+        try:
+            output = self._model(inputs=ids, attention_mask=attention_mask)
+        except TypeError:
+            output = self._model(input_ids=ids, attention_mask=attention_mask)
+        return self._extract_vectors(output)
 
     @staticmethod
     def _extract_vectors(output: Any) -> list[list[float]]:
