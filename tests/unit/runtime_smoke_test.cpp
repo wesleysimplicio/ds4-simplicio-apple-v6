@@ -19,6 +19,7 @@
 #include "moe/expert_pager.h"
 #include "moe/router.h"
 #include "telemetry/telemetry_sink.h"
+#include "tuning/thermal_monitor.h"
 
 namespace {
 
@@ -48,9 +49,12 @@ int main() {
   ok &= Expect(context.mode() == probe.recommendedMode,
                "runtime context should start with recommended mode");
 
+  us4::ThermalMonitor expectedMonitor(probe);
+  const us4::RuntimeMode expectedMicroEffective =
+      expectedMonitor.Decide(us4::RuntimeMode::kMicro).effectiveMode;
   context.SetMode(us4::RuntimeMode::kMicro);
-  ok &= Expect(context.mode() == us4::RuntimeMode::kMicro,
-               "runtime context should allow mode override");
+  ok &= Expect(context.mode() == expectedMicroEffective,
+               "runtime context should allow mode override (post thermal clamp)");
   context.SetBackend(us4::BackendType::kScalarCpu);
   ok &= Expect(context.backend() == us4::BackendType::kScalarCpu,
                "runtime context should allow backend override");

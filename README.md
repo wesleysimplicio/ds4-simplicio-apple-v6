@@ -133,6 +133,58 @@ Windows PowerShell:
 .\build\runtime\benchmarks\matrix_runner.exe
 ```
 
+### 6. Serve OpenAI-Compatible Endpoint (Optional)
+
+`us4-cli serve` exposes a local OpenAI-compatible HTTP endpoint backed by MLX.
+Chat completions are served by `mlx_lm.server` (managed child process);
+embeddings are served in-process by `mlx-embeddings`. Single-file Python
+sidecar at `scripts/openai_serve.py`. No FastAPI, no uvicorn.
+
+Install the sidecar dependencies once:
+
+```bash
+pip install -r scripts/requirements-serve.txt
+```
+
+Run with defaults (chat + embeddings, port 8080, bind 127.0.0.1):
+
+```bash
+./build/apps/us4-cli serve
+```
+
+Override models or disable a backend:
+
+```bash
+./build/apps/us4-cli serve \
+  --chat-model mlx-community/Qwen2.5-Coder-7B-Instruct-4bit \
+  --embed-model mlx-community/embeddinggemma-300m-bf16
+
+./build/apps/us4-cli serve --no-chat            # embeddings only
+./build/apps/us4-cli serve --no-embed --port 8088
+```
+
+Smoke once it is up:
+
+```bash
+curl -s http://127.0.0.1:8080/health
+curl -s http://127.0.0.1:8080/v1/models
+curl -s http://127.0.0.1:8080/v1/embeddings \
+  -H 'Content-Type: application/json' \
+  -d '{"input":"vector me"}'
+```
+
+Point any OpenAI-shape client at the local endpoint via env var. Example for
+`simplicio-cli`:
+
+```bash
+export SIMPLICIO_BASE_URL=http://127.0.0.1:8080/v1
+export OPENAI_API_KEY=anything
+simplicio "explain this diff"
+```
+
+Full contract (endpoints, request/response shapes, env knobs, exit codes,
+security posture) lives in [`.specs/runtime/SERVE-OPENAI.md`](.specs/runtime/SERVE-OPENAI.md).
+
 ### What "Working" Looks Like
 
 - `us4-cli --probe` prints hardware/runtime capability information.

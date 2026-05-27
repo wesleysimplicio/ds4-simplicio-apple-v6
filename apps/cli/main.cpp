@@ -1,4 +1,7 @@
 #include <algorithm>
+#include <cerrno>
+#include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <iostream>
 #include <limits>
@@ -6,6 +9,9 @@
 #include <sstream>
 #include <string>
 #include <string_view>
+#include <vector>
+
+#include <unistd.h>
 
 #include "adapters/adapter_registry.h"
 #include "core/hardware_probe.h"
@@ -109,7 +115,79 @@ void PrintHelp() {
             << "  us4-cli list-models [--json]\n"
             << "  us4-cli run --model <name> [--model-path <path>] [--backend "
                "<scalar|neon|mlx|metal|ane>] --prompt <text> [--max-tokens N] "
-               "[--json]\n";
+               "[--json]\n"
+            << "  us4-cli serve [--host <addr>] [--port <n>] "
+               "[--chat-model <id>] [--embed-model <id>] "
+               "[--no-chat] [--no-embed]\n";
+}
+
+int SetServeEnv(const char *name, const std::string &value) {
+  if (::setenv(name, value.c_str(), 1) != 0) {
+    const int savedErrno = errno;
+    std::cerr << "us4-cli serve: setenv " << name
+              << " failed: " << std::strerror(savedErrno) << "\n";
+    return 1;
+  }
+  return 0;
+}
+
+int RunServeCommand(const std::optional<std::string> &host,
+                    const std::optional<std::string> &port,
+                    const std::optional<std::string> &chatModel,
+                    const std::optional<std::string> &embedModel,
+                    const bool disableChat, const bool disableEmbed) {
+  if (host.has_value() && SetServeEnv("US4_SERVE_HOST", *host) != 0) {
+    return 1;
+  }
+  if (port.has_value() && SetServeEnv("US4_SERVE_PORT", *port) != 0) {
+    return 1;
+  }
+  if (chatModel.has_value() &&
+      SetServeEnv("US4_SERVE_CHAT_MODEL", *chatModel) != 0) {
+    return 1;
+  }
+  if (embedModel.has_value() &&
+      SetServeEnv("US4_SERVE_EMBED_MODEL", *embedModel) != 0) {
+    return 1;
+  }
+  if (disableChat && SetServeEnv("US4_SERVE_DISABLE_CHAT", "1") != 0) {
+    return 1;
+  }
+  if (disableEmbed && SetServeEnv("US4_SERVE_DISABLE_EMBED", "1") != 0) {
+    return 1;
+  }
+
+  const char *override = std::getenv("US4_SERVE_SCRIPT");
+  const std::string scriptPath =
+      (override != nullptr && *override != '\0')
+          ? std::string(override)
+          : std::string("scripts/openai_serve.py");
+  if (!std::filesystem::exists(scriptPath)) {
+    std::cerr << "us4-cli serve: script not found at '" << scriptPath
+              << "'. Run from repo root or set US4_SERVE_SCRIPT.\n";
+    return 1;
+  }
+
+  const char *interpreter = std::getenv("US4_SERVE_PYTHON");
+  const std::string pythonBin =
+      (interpreter != nullptr && *interpreter != '\0') ? interpreter
+                                                       : "python3";
+
+  // argsOwned is const so its element addresses are stable for the lifetime
+  // of argv; argv must remain valid only until execvp returns.
+  const std::vector<std::string> argsOwned{pythonBin, scriptPath};
+  std::vector<char *> argv;
+  argv.reserve(argsOwned.size() + 1);
+  for (const auto &item : argsOwned) {
+    argv.push_back(const_cast<char *>(item.c_str()));
+  }
+  argv.push_back(nullptr);
+
+  ::execvp(pythonBin.c_str(), argv.data());
+  const int savedErrno = errno;
+  std::cerr << "us4-cli serve: failed to exec '" << pythonBin
+            << "': " << std::strerror(savedErrno) << "\n";
+  return 1;
 }
 
 void PrintProbeText(const us4::HardwareProbeResult &probe) {
@@ -495,19 +573,40 @@ int main(int argc, char **argv) {
   bool showHelp = false;
   bool listModels = false;
   bool runCommand = false;
+  bool serveCommand = false;
+  bool serveDisableChat = false;
+  bool serveDisableEmbed = false;
   std::optional<std::string> modeValue;
   std::optional<std::string> modelName;
   std::optional<std::string> modelPath;
   std::optional<std::string> backendValue;
   std::optional<std::string> promptValue;
+  std::optional<std::string> serveHost;
+  std::optional<std::string> servePort;
+  std::optional<std::string> serveChatModel;
+  std::optional<std::string> serveEmbedModel;
   std::size_t maxTokens = 16;
 
   for (int index = 1; index < argc; ++index) {
     const std::string_view arg = argv[index];
     if (arg == "run") {
       runCommand = true;
+    } else if (arg == "serve") {
+      serveCommand = true;
     } else if (arg == "list-models") {
       listModels = true;
+    } else if (arg == "--host" && index + 1 < argc) {
+      serveHost = argv[++index];
+    } else if (arg == "--port" && index + 1 < argc) {
+      servePort = argv[++index];
+    } else if (arg == "--chat-model" && index + 1 < argc) {
+      serveChatModel = argv[++index];
+    } else if (arg == "--embed-model" && index + 1 < argc) {
+      serveEmbedModel = argv[++index];
+    } else if (arg == "--no-chat") {
+      serveDisableChat = true;
+    } else if (arg == "--no-embed") {
+      serveDisableEmbed = true;
     } else if (arg == "--json") {
       outputJson = true;
     } else if (arg == "--probe") {
@@ -552,6 +651,12 @@ int main(int argc, char **argv) {
   if (showVersion) {
     std::cout << us4::kUs4Version << "\n";
     return 0;
+  }
+
+  if (serveCommand) {
+    return RunServeCommand(serveHost, servePort, serveChatModel,
+                           serveEmbedModel, serveDisableChat,
+                           serveDisableEmbed);
   }
 
   const us4::HardwareProbeResult probe = us4::HardwareProbe::Detect();

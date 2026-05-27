@@ -1,0 +1,189 @@
+import {expect, test, type TestInfo} from "@playwright/test";
+import {spawn, type ChildProcess} from "node:child_process";
+import {existsSync} from "node:fs";
+import {createServer} from "node:net";
+import path from "node:path";
+import {setTimeout as sleep} from "node:timers/promises";
+
+const repoRoot = path.resolve(__dirname, "..", "..");
+const nativeBin = path.join(repoRoot, "build", "apps", "us4-cli");
+const serveScript = path.join(repoRoot, "scripts", "openai_serve.py");
+
+type FetchResult = {
+  status: number;
+  body: string;
+  json: unknown;
+};
+
+async function freePort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const srv = createServer();
+    srv.on("error", reject);
+    srv.listen(0, "127.0.0.1", () => {
+      const address = srv.address();
+      if (typeof address === "object" && address !== null) {
+        const port = address.port;
+        srv.close(() => resolve(port));
+        return;
+      }
+      srv.close();
+      reject(new Error("could not allocate port"));
+    });
+  });
+}
+
+async function waitReady(url: string, deadlineMs = 20000): Promise<void> {
+  const start = Date.now();
+  let lastErr: unknown = null;
+  while (Date.now() - start < deadlineMs) {
+    try {
+      const resp = await fetch(url);
+      if (resp.ok) return;
+    } catch (err) {
+      lastErr = err;
+    }
+    await sleep(200);
+  }
+  throw new Error(
+      `serve never became ready at ${url}: ${String(lastErr ?? "timeout")}`);
+}
+
+async function getJson(url: string): Promise<FetchResult> {
+  const resp = await fetch(url);
+  const body = await resp.text();
+  let json: unknown = null;
+  try {
+    json = JSON.parse(body);
+  } catch {
+    json = null;
+  }
+  return {status : resp.status, body, json};
+}
+
+async function postJson(url: string, payload: unknown): Promise<FetchResult> {
+  const resp = await fetch(url, {
+    method : "POST",
+    headers : {"Content-Type" : "application/json"},
+    body : JSON.stringify(payload),
+  });
+  const body = await resp.text();
+  let json: unknown = null;
+  try {
+    json = JSON.parse(body);
+  } catch {
+    json = null;
+  }
+  return {status : resp.status, body, json};
+}
+
+async function attach(testInfo: TestInfo, label: string,
+                      payload: unknown): Promise<void> {
+  await testInfo.attach(`serve-${label}`, {
+    body : typeof payload === "string" ? payload
+                                       : JSON.stringify(payload, null, 2),
+    contentType : "text/plain",
+  });
+}
+
+const haveBinary = existsSync(nativeBin) && existsSync(serveScript);
+
+test.describe("us4-cli serve OpenAI-compat smoke", () => {
+  test.skip(!haveBinary,
+            "native us4-cli or scripts/openai_serve.py not built; " +
+                "build with: cmake --build build --target us4-cli");
+
+  let serveProc: ChildProcess|null = null;
+  let basePort = 0;
+
+  test.beforeAll(async () => {
+    basePort = await freePort();
+    serveProc = spawn(nativeBin,
+                      [
+                        "serve",
+                        "--host",
+                        "127.0.0.1",
+                        "--port",
+                        String(basePort),
+                        "--no-chat",
+                        "--no-embed",
+                      ],
+                      {
+                        cwd : repoRoot,
+                        env : {...process.env, NO_COLOR : "1"},
+                        stdio : [ "ignore", "pipe", "pipe" ],
+                      });
+    await waitReady(`http://127.0.0.1:${basePort}/health`);
+  });
+
+  test.afterAll(async () => {
+    if (serveProc && !serveProc.killed) {
+      serveProc.kill("SIGINT");
+      await new Promise<void>((resolve) => {
+        if (!serveProc) return resolve();
+        serveProc.once("exit", () => resolve());
+        setTimeout(() => {
+          if (serveProc && !serveProc.killed) {
+            serveProc.kill("SIGKILL");
+          }
+          resolve();
+        }, 3000);
+      });
+    }
+  });
+
+  test("health reports both backends disabled", async ({}, testInfo) => {
+    const result = await getJson(`http://127.0.0.1:${basePort}/health`);
+    await attach(testInfo, "health", result.body);
+    expect(result.status).toBe(200);
+    expect(result.json).toMatchObject(
+        {status : "ok", chat : false, embed : false});
+  });
+
+  test("models list is empty when both backends disabled",
+       async ({}, testInfo) => {
+         const result =
+             await getJson(`http://127.0.0.1:${basePort}/v1/models`);
+         await attach(testInfo, "models", result.body);
+         expect(result.status).toBe(200);
+         expect(result.json).toMatchObject({object : "list", data : []});
+       });
+
+  test("embeddings POST returns 503 when --no-embed", async ({}, testInfo) => {
+    const result = await postJson(
+        `http://127.0.0.1:${basePort}/v1/embeddings`, {input : "hello"});
+    await attach(testInfo, "embeddings-disabled", result.body);
+    expect(result.status).toBe(503);
+    expect(result.json).toMatchObject({
+      error : {
+        type : "service_unavailable",
+      },
+    });
+  });
+
+  test("chat completions POST returns 503 when --no-chat",
+       async ({}, testInfo) => {
+         const result = await postJson(
+             `http://127.0.0.1:${basePort}/v1/chat/completions`, {
+               model : "any",
+               messages : [ {role : "user", content : "hi"} ],
+             });
+         await attach(testInfo, "chat-disabled", result.body);
+         expect(result.status).toBe(503);
+         expect(result.json).toMatchObject({
+           error : {
+             type : "service_unavailable",
+           },
+         });
+       });
+
+  test("unknown route returns 404 not_found", async ({}, testInfo) => {
+    const result = await getJson(`http://127.0.0.1:${basePort}/bogus`);
+    await attach(testInfo, "not-found", result.body);
+    expect(result.status).toBe(404);
+    expect(result.json).toMatchObject({
+      error : {
+        type : "not_found",
+      },
+    });
+  });
+});
